@@ -28,21 +28,71 @@ jobs:
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
           echo "0bbd1e0230cdd08a877e5031d44caf26b3de3bdce35d4cc8097f73833fda47de  ci_source/android_ndk_shared_ptr.patch" | sha256sum -c --strict
           echo "9cd3cc7a8fb438fbc435278b03b55eaeea2a5d5f23a7793fd37269cc4a36ebe6  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
+          echo "2864ce7233dca991f8592312a054e8bcbd3292327f04ac61ca33583d5f082163  ci_source/russian_king_forced_continuation_1042.patch" | sha256sum -c --strict
           mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           SRC=/tmp/albay/albay_minimal
           patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
           patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
           grep -q 'std::shared_ptr<SharedSearchState> shared_state() const' "$SRC/include/albay/search.hpp"
           grep -q 'std::atomic_load_explicit(&shared_state_owner_' "$SRC/include/albay/search.hpp"
           grep -q 'mutable std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
           ! grep -q 'shared_state_ptr_' "$SRC/include/albay/search.hpp"
-          grep -q 'kEngineVersion = "1.0.41"' "$SRC/include/albay/types.hpp"
+          grep -q 'kEngineVersion = "1.0.42"' "$SRC/include/albay/types.hpp"
           grep -q 'ALBAY_EVALUATION_SCALE 30000' "$SRC/include/albay/c_api.h"
           grep -q 'ALBAY_MATE_THRESHOLD 29000' "$SRC/include/albay/c_api.h"
           grep -q 'ALBAY_MATE_SCORE 30000' "$SRC/include/albay/c_api.h"
           grep -q 'ALBAY_INFINITE_SCORE 32000' "$SRC/include/albay/c_api.h"
           ! grep -R -q 'public_score_from_internal' "$SRC/include/albay" "$SRC/src/c_api.cpp"
+          grep -q 'context.output.resize(write);' "$SRC/src/movegen.cpp"
+          grep -q 'another initial direction may still legally capture fewer pieces' "$SRC/src/movegen.cpp"
+
+      - name: Host rule regression probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B host-rule -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF
+          cmake --build host-rule --target albay --parallel 2
+          python3 - <<'PY'
+          import ctypes
+          from pathlib import Path
+
+          lib = ctypes.CDLL(str(Path('host-rule/libalbay.so').resolve()))
+          lib.albay_engine_create.restype = ctypes.c_void_p
+          lib.albay_engine_destroy.argtypes = [ctypes.c_void_p]
+          lib.albay_engine_set_position.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+          lib.albay_engine_set_position.restype = ctypes.c_int
+          lib.albay_engine_generate_legal_moves.argtypes = [
+              ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
+              ctypes.POINTER(ctypes.c_size_t),
+          ]
+          lib.albay_engine_generate_legal_moves.restype = ctypes.c_int
+          lib.albay_engine_get_version.restype = ctypes.c_char_p
+
+          engine = lib.albay_engine_create()
+          assert engine
+          try:
+              assert lib.albay_engine_get_version().decode() == '1.0.42'
+              apf = b'W:WKa1,e3:Ba3,c3,g5;NP=0'
+              assert lib.albay_engine_set_position(engine, apf) == 0
+              required = ctypes.c_size_t()
+              status = lib.albay_engine_generate_legal_moves(
+                  engine, None, 0, ctypes.byref(required)
+              )
+              assert status in (0, 4), status
+              buffer = ctypes.create_string_buffer(required.value)
+              assert lib.albay_engine_generate_legal_moves(
+                  engine, buffer, len(buffer), ctypes.byref(required)
+              ) == 0
+              legal = buffer.value.decode()
+              assert legal == 'a1xf6xh4', legal
+          finally:
+              lib.albay_engine_destroy(engine)
+          PY
 
       - name: Install NDK r29
         shell: bash
@@ -90,7 +140,7 @@ jobs:
           grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt
           sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
           cat > artifact/BUILD_INFO.txt <<'EOF'
-          Source version: 1.0.41
+          Source version: 1.0.42
           NDK: 29.0.14206865
           ABI: arm64-v8a
           Minimum API: 29
@@ -104,9 +154,10 @@ jobs:
           Mate score: 30000
           Internal alpha-beta infinity: 32000 (not a normal UI evaluation)
           Score rescaling/conversion: none
+          Russian king rule: forced continuation after a selected jump; no truncated landing
+          Uploaded regression position: only a1xf6xh4 is legal
           Android shared-state model: atomic shared_ptr snapshots (no raw pointer)
           Host Release CTest: 47/47 passed
-          Sanitized search/SMP/C API: 16/16, 5/5, 9/9 passed
           EOF
           {
             echo "ELF AArch64: PASS"
@@ -114,6 +165,7 @@ jobs:
             echo "No GNU/shared C++ runtime: PASS"
             echo "27 C API exports: PASS"
             echo "Raw original score contract 29000/30000/32000: PASS"
+            echo "Russian king forced-continuation source probe: PASS"
             echo "10000 score conversion absent: PASS"
             echo "16 KiB LOAD alignment: PASS"
             echo "Raw-pointer shared-state bridge absent: PASS"
@@ -131,7 +183,7 @@ jobs:
       - name: Upload verified library
         uses: actions/upload-artifact@v4
         with:
-          name: Albay-1.0.41-Original-Score-Android-arm64-v8a-NDK-r29-static
+          name: Albay-1.0.42-Russian-Capture-Fix-Android-arm64-v8a-NDK-r29-static
           path: artifact/
           if-no-files-found: error
           retention-days: 30
