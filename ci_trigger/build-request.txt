@@ -1,0 +1,1 @@
+Build request for Albay 1.0.38 Android arm64-v8a with Android NDK r29.0.14206865, API 29, static libc++, and 16 KiB ELF alignment.
