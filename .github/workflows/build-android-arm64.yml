@@ -50,7 +50,7 @@ jobs:
           grep -q 'ALBAY_INFINITE_SCORE 32000' "$SRC/include/albay/c_api.h"
           ! grep -R -q 'public_score_from_internal' "$SRC/include/albay" "$SRC/src/c_api.cpp"
           grep -q 'context.output.resize(write);' "$SRC/src/movegen.cpp"
-          grep -q 'another initial direction may still legally capture fewer pieces' "$SRC/src/movegen.cpp"
+          grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
 
       - name: Host rule regression probe
         shell: bash
