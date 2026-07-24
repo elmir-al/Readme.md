@@ -35,14 +35,18 @@ jobs:
           base64 --decode /tmp/albay_source.b64 > /tmp/albay_source.tar.xz
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay_source.tar.xz" | sha256sum --check --strict
           echo "6f641aa565bdf9bc5d331e4dc19ecb8071fbbae378d3e10f8884b276f3e1141e  ci_source/android_ndk_shared_ptr.patch" | sha256sum --check --strict
+          echo "d2495f70fc684a47cb178ed866946d7956715b01fb47d65c2966bbbfafb8804d  ci_source/evaluation_scale_compat.patch" | sha256sum --check --strict
           mkdir -p /tmp/albay_unpack
           tar -xJf /tmp/albay_source.tar.xz -C /tmp/albay_unpack
           SRC=/tmp/albay_unpack/albay_minimal
           test -f "$SRC/CMakeLists.txt"
           test -f "$SRC/src/c_api.cpp"
           patch --directory="$SRC" --strip=1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          patch --directory="$SRC" --strip=1 --forward --batch < ci_source/evaluation_scale_compat.patch
           grep -q 'std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
           ! grep -q 'std::atomic<std::shared_ptr<SharedSearchState>>' "$SRC/include/albay/search.hpp"
+          grep -q 'albay_engine_get_evaluation_scale' "$SRC/include/albay/c_api.h"
+          grep -q 'return 10000;' "$SRC/src/c_api.cpp"
 
       - name: Install Android NDK r29
         shell: bash
@@ -110,7 +114,7 @@ jobs:
           : > artifact/verification.txt
 
           report() {
-            printf '%-48s %s\n' "$1" "$2" | tee -a artifact/verification.txt
+            printf '%-52s %s\n' "$1" "$2" | tee -a artifact/verification.txt
           }
           require_pattern() {
             label="$1"; pattern="$2"; file="$3"
@@ -145,8 +149,18 @@ jobs:
           fi
 
           require_pattern "Export albay_engine_create" 'albay_engine_create$' artifact/exports.txt
-          require_pattern "Export albay_engine_search" 'albay_engine_search$' artifact/exports.txt
+          require_pattern "Export albay_engine_start_search" 'albay_engine_start_search$' artifact/exports.txt
+          require_pattern "Export albay_engine_get_best_move" 'albay_engine_get_best_move$' artifact/exports.txt
+          require_pattern "Export albay_engine_get_evaluation_scale" 'albay_engine_get_evaluation_scale$' artifact/exports.txt
           require_pattern "Export albay_engine_destroy" 'albay_engine_destroy$' artifact/exports.txt
+
+          export_count=$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' artifact/exports.txt || true)
+          if [ "$export_count" -eq 27 ]; then
+            report "C API export count is 27" PASS
+          else
+            report "C API export count is 27 (found $export_count)" FAIL
+            failure=1
+          fi
 
           awk '$1 == "LOAD" {print}' artifact/program-headers.txt > artifact/load-segments.txt
           if grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt; then
@@ -167,7 +181,8 @@ jobs:
           ELF maximum/common page alignment: 16 KiB
           JNI wrapper: disabled
           Android libc++ shared-state portability patch: applied
-          Host Release tests after patch: 47/47 passed
+          10000-scale C API compatibility export: restored
+          Host Release tests after both patches: 47/47 passed
           EOF
 
           exit "$failure"
