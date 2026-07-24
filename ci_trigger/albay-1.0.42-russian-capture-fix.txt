@@ -1,2 +1,2 @@
 Trigger pull-request verification for Albay 1.0.42 Russian flying-king forced-continuation rule.
-Retry with reconstruct diagnostics and fixed-size C API regression buffer.
+Retry after correcting the multiline workflow source check.
