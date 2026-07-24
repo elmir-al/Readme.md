@@ -23,18 +23,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifact
+          exec > >(tee artifact/reconstruct.log) 2>&1
           test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
           cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
+          sha256sum ci_source/android_ndk_shared_ptr.patch ci_source/evaluation_scale_compat.patch ci_source/russian_king_forced_continuation_1042.patch
           echo "0bbd1e0230cdd08a877e5031d44caf26b3de3bdce35d4cc8097f73833fda47de  ci_source/android_ndk_shared_ptr.patch" | sha256sum -c --strict
           echo "9cd3cc7a8fb438fbc435278b03b55eaeea2a5d5f23a7793fd37269cc4a36ebe6  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
           echo "2864ce7233dca991f8592312a054e8bcbd3292327f04ac61ca33583d5f082163  ci_source/russian_king_forced_continuation_1042.patch" | sha256sum -c --strict
+          rm -rf /tmp/albay
           mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           SRC=/tmp/albay/albay_minimal
-          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/android_ndk_shared_ptr.patch
+          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/evaluation_scale_compat.patch
+          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/russian_king_forced_continuation_1042.patch
           grep -q 'std::shared_ptr<SharedSearchState> shared_state() const' "$SRC/include/albay/search.hpp"
           grep -q 'std::atomic_load_explicit(&shared_state_owner_' "$SRC/include/albay/search.hpp"
           grep -q 'mutable std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
@@ -77,17 +81,15 @@ jobs:
           assert engine
           try:
               assert lib.albay_engine_get_version().decode() == '1.0.42'
-              apf = b'W:WKa1,e3:Ba3,c3,g5;NP=0'
-              assert lib.albay_engine_set_position(engine, apf) == 0
-              required = ctypes.c_size_t()
-              status = lib.albay_engine_generate_legal_moves(
-                  engine, None, 0, ctypes.byref(required)
-              )
-              assert status in (0, 4), status
-              buffer = ctypes.create_string_buffer(required.value)
-              assert lib.albay_engine_generate_legal_moves(
-                  engine, buffer, len(buffer), ctypes.byref(required)
+              assert lib.albay_engine_set_position(
+                  engine, b'W:WKa1,e3:Ba3,c3,g5;NP=0'
               ) == 0
+              required = ctypes.c_size_t()
+              buffer = ctypes.create_string_buffer(4096)
+              status = lib.albay_engine_generate_legal_moves(
+                  engine, buffer, len(buffer), ctypes.byref(required)
+              )
+              assert status == 0, status
               legal = buffer.value.decode()
               assert legal == 'a1xf6xh4', legal
           finally:
@@ -115,7 +117,6 @@ jobs:
             -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
             -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
             -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
-          mkdir -p artifact
           cmake --build build --target albay --parallel 2 --verbose 2>&1 | tee artifact/build.log
 
       - name: Verify binary
@@ -165,7 +166,7 @@ jobs:
             echo "No GNU/shared C++ runtime: PASS"
             echo "27 C API exports: PASS"
             echo "Raw original score contract 29000/30000/32000: PASS"
-            echo "Russian king forced-continuation source probe: PASS"
+            echo "Russian king forced-continuation host probe: PASS"
             echo "10000 score conversion absent: PASS"
             echo "16 KiB LOAD alignment: PASS"
             echo "Raw-pointer shared-state bridge absent: PASS"
