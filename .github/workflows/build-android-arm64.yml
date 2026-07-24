@@ -27,7 +27,7 @@ jobs:
           cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
           echo "0bbd1e0230cdd08a877e5031d44caf26b3de3bdce35d4cc8097f73833fda47de  ci_source/android_ndk_shared_ptr.patch" | sha256sum -c --strict
-          echo "7ad8e5b2e57f07bd2ca62b20bcea570b3f731ae650f2de02b360193305c2e4b0  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
+          echo "edc31b255e1a8bacaefc3cafca54e93380d13b9d88fb25fd6204e00ec5d0181e  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
           mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           SRC=/tmp/albay/albay_minimal
@@ -37,8 +37,10 @@ jobs:
           grep -q 'std::atomic_load_explicit(&shared_state_owner_' "$SRC/include/albay/search.hpp"
           grep -q 'mutable std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
           ! grep -q 'shared_state_ptr_' "$SRC/include/albay/search.hpp"
-          grep -q 'albay_engine_get_evaluation_scale' "$SRC/include/albay/c_api.h"
-          grep -q 'return 10000;' "$SRC/src/c_api.cpp"
+          grep -q 'kEngineVersion = "1.0.40"' "$SRC/include/albay/types.hpp"
+          grep -q 'ALBAY_EVALUATION_SCALE 10000' "$SRC/include/albay/c_api.h"
+          grep -q 'public_score_from_internal(source.score)' "$SRC/src/c_api.cpp"
+          grep -q 'kPublicEvaluationScale = 10'"'"'000' "$SRC/include/albay/public_score.hpp"
 
       - name: Install NDK r29
         shell: bash
@@ -86,7 +88,7 @@ jobs:
           grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt
           sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
           cat > artifact/BUILD_INFO.txt <<'EOF'
-          Source version: 1.0.38
+          Source version: 1.0.40
           NDK: 29.0.14206865
           ABI: arm64-v8a
           Minimum API: 29
@@ -94,16 +96,20 @@ jobs:
           CPU: portable ARMv8-A
           ELF LOAD alignment: 16 KiB
           C API exports: 27
-          Evaluation scale: 10000
+          Public evaluation scale: -10000..+10000
+          Ordinary public score range: -8999..+8999
+          Mate/result public range: abs(score) >= 9000
+          Internal tuned search scale: unchanged
           Android shared-state model: atomic shared_ptr snapshots (no raw pointer)
-          Host Release tests after patches: 47/47 passed
+          Host Release CTest: 47/47 passed
+          Sanitized search/SMP/C API: 16/16, 5/5, 9/9 passed
           EOF
           {
             echo "ELF AArch64: PASS"
             echo "ET_DYN: PASS"
             echo "No GNU/shared C++ runtime: PASS"
             echo "27 C API exports: PASS"
-            echo "10000 evaluation scale export: PASS"
+            echo "Real 10000 public score conversion: PASS"
             echo "16 KiB LOAD alignment: PASS"
             echo "Raw-pointer shared-state bridge absent: PASS"
           } > artifact/verification.txt
@@ -120,7 +126,7 @@ jobs:
       - name: Upload verified library
         uses: actions/upload-artifact@v4
         with:
-          name: Albay-1.0.38-Android-arm64-v8a-NDK-r29-static
+          name: Albay-1.0.40-Android-arm64-v8a-NDK-r29-static
           path: artifact/
           if-no-files-found: error
           retention-days: 30
