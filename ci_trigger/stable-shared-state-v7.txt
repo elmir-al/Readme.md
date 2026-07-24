@@ -1,0 +1,1 @@
+Verify the lifetime-safe atomic shared_ptr Android NDK build.
