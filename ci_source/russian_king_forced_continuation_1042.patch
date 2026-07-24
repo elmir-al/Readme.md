@@ -1,0 +1,115 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -5,7 +5,7 @@
+ # Albay Russian Draughts Engine project.
+ 
+ cmake_minimum_required(VERSION 3.22)
+-project(AlbayRussianDraughtsEngine VERSION 1.0.41 LANGUAGES C CXX)
++project(AlbayRussianDraughtsEngine VERSION 1.0.42 LANGUAGES C CXX)
+ 
+ option(ALBAY_BUILD_TESTS "Build Albay unit and regression tests" ON)
+ option(ALBAY_BUILD_TOOLS "Build Albay command-line tools" ON)
+--- a/include/albay/types.hpp
++++ b/include/albay/types.hpp
+@@ -24,7 +24,7 @@
+ 
+ inline constexpr std::string_view kEngineName = "Albay Russian Draughts Engine";
+ inline constexpr std::string_view kEngineAuthor = "Elmir Hajizada";
+-inline constexpr std::string_view kEngineVersion = "1.0.41";
++inline constexpr std::string_view kEngineVersion = "1.0.42";
+ 
+ enum class Color : std::uint8_t {
+     White = 0,
+--- a/include/albay/move.hpp
++++ b/include/albay/move.hpp
+@@ -172,6 +172,21 @@
+         return size_ == 0;
+     }
+ 
++    // Shrink the list without reallocating. Capture generation uses this to
++    // remove truncated king landings after a complete continuation has been
++    // discovered for the same jumped piece.
++    void resize(std::size_t new_size) noexcept {
++        if (new_size >= size_) {
++            return;
++        }
++        if constexpr (!std::is_trivially_destructible_v<Move>) {
++            for (std::size_t index = new_size; index < size_; ++index) {
++                std::destroy_at(data() + index);
++            }
++        }
++        size_ = new_size;
++    }
++
+     [[nodiscard]] Move& operator[](std::size_t index) noexcept {
+         return data()[index];
+     }
+--- a/src/movegen.cpp
++++ b/src/movegen.cpp
+@@ -197,7 +197,7 @@
+     Square current,
+     Bitboard captured_mask,
+     Move& partial) {
+-    bool found_continuation = false;
++    bool found_capture_direction = false;
+     const Bitboard occupied = dynamic_occupied(context, current);
+ 
+     for (std::size_t direction = 0; direction < 4; ++direction) {
+@@ -213,8 +213,22 @@
+         }
+ 
+         Bitboard landings = empty_ray_prefix(jumped, direction, occupied);
++        if (landings == 0) {
++            continue;
++        }
++        found_capture_direction = true;
++
++        // Russian draughts allows a free choice between different capture
++        // directions, but a chosen king jump may not be stopped on a landing
++        // square when another landing beyond the same jumped piece continues
++        // the capture. Generate this direction contiguously, then remove only
++        // its truncated one-jump leaves when a complete continuation exists.
++        // This is not the Brazilian maximum-capture rule: another initial
++        // direction may still legally capture fewer pieces.
++        const std::size_t direction_begin = context.output.size();
++        const std::uint8_t count_before_jump = partial.capture_count;
++
+         while (landings != 0) {
+-            found_continuation = true;
+             const Square landing = pop_nearest_on_ray(landings, direction);
+             const std::uint8_t path_index = partial.capture_count;
+             partial.captures[path_index] = jumped;
+@@ -226,9 +240,32 @@
+ 
+             --partial.capture_count;
+         }
++
++        const std::uint8_t one_jump_count =
++            static_cast<std::uint8_t>(count_before_jump + 1U);
++        const std::size_t direction_end = context.output.size();
++        bool has_forced_continuation = false;
++        for (std::size_t index = direction_begin; index < direction_end; ++index) {
++            if (context.output[index].capture_count > one_jump_count) {
++                has_forced_continuation = true;
++                break;
++            }
++        }
++        if (has_forced_continuation) {
++            std::size_t write = direction_begin;
++            for (std::size_t read = direction_begin; read < direction_end; ++read) {
++                if (context.output[read].capture_count > one_jump_count) {
++                    if (write != read) {
++                        context.output[write] = context.output[read];
++                    }
++                    ++write;
++                }
++            }
++            context.output.resize(write);
++        }
+     }
+ 
+-    if (!found_continuation && partial.capture_count > 0) {
++    if (!found_capture_direction && partial.capture_count > 0) {
+         emit_capture_leaf(context, current, true, partial);
+     }
+ }
