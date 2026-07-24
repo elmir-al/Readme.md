@@ -85,6 +85,9 @@ jobs:
           cmake --build build/android-arm64 --target albay --parallel 2 --verbose 2>&1 | tee artifact/build.log
           status=${PIPESTATUS[0]}
           printf '%s\n' "$status" > artifact/build-exit-code.txt
+          if [ "$status" -eq 0 ] && [ -f build/android-arm64/libalbay.so ]; then
+            cp build/android-arm64/libalbay.so artifact/libalbay.unverified.so
+          fi
           exit "$status"
 
       - name: Upload build diagnostics
@@ -92,38 +95,66 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Albay-build-diagnostics-${{ github.run_number }}
-          path: |
-            artifact/build.log
-            artifact/build-exit-code.txt
+          path: artifact/
           if-no-files-found: warn
           retention-days: 30
 
       - name: Verify ELF, exports, runtime and package
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
           TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           SO=build/android-arm64/libalbay.so
-          test -f "$SO"
-          "$TOOLS/llvm-strip" --strip-unneeded "$SO"
+          failure=0
+          : > artifact/verification.txt
 
+          report() {
+            printf '%-48s %s\n' "$1" "$2" | tee -a artifact/verification.txt
+          }
+          require_pattern() {
+            label="$1"; pattern="$2"; file="$3"
+            if grep -Eq "$pattern" "$file"; then
+              report "$label" PASS
+            else
+              report "$label" FAIL
+              failure=1
+            fi
+          }
+
+          if [ ! -f "$SO" ]; then
+            report "Built shared library exists" FAIL
+            exit 1
+          fi
+          report "Built shared library exists" PASS
+          "$TOOLS/llvm-strip" --strip-unneeded "$SO"
           cp "$SO" artifact/libalbay.so
           "$TOOLS/llvm-readelf" -h artifact/libalbay.so | tee artifact/elf-header.txt
           "$TOOLS/llvm-readelf" -d artifact/libalbay.so | tee artifact/dynamic-dependencies.txt
           "$TOOLS/llvm-readelf" -l artifact/libalbay.so | tee artifact/program-headers.txt
           "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so | tee artifact/exports.txt
 
-          grep -q "Machine:.*AArch64" artifact/elf-header.txt
-          grep -q "Type:.*DYN" artifact/elf-header.txt
+          require_pattern "ELF machine is AArch64" 'Machine:[[:space:]]+AArch64' artifact/elf-header.txt
+          require_pattern "ELF type is shared object" 'Type:[[:space:]]+DYN' artifact/elf-header.txt
+
           if grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.txt; then
-            echo "Forbidden dynamic C++ runtime dependency found" >&2
-            exit 1
+            report "No forbidden dynamic C++ runtime" FAIL
+            failure=1
+          else
+            report "No forbidden dynamic C++ runtime" PASS
           fi
-          grep -q 'albay_engine_create' artifact/exports.txt
-          grep -q 'albay_engine_search' artifact/exports.txt
-          grep -q 'albay_engine_destroy' artifact/exports.txt
-          grep -E '^  LOAD' artifact/program-headers.txt | grep -q '0x4000'
+
+          require_pattern "Export albay_engine_create" 'albay_engine_create$' artifact/exports.txt
+          require_pattern "Export albay_engine_search" 'albay_engine_search$' artifact/exports.txt
+          require_pattern "Export albay_engine_destroy" 'albay_engine_destroy$' artifact/exports.txt
+
+          awk '$1 == "LOAD" {print}' artifact/program-headers.txt > artifact/load-segments.txt
+          if grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt; then
+            report "LOAD segment alignment includes 0x4000" PASS
+          else
+            report "LOAD segment alignment includes 0x4000" FAIL
+            failure=1
+          fi
 
           sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
           cat > artifact/BUILD_INFO.txt <<'EOF'
@@ -138,6 +169,17 @@ jobs:
           Android libc++ shared-state portability patch: applied
           Host Release tests after patch: 47/47 passed
           EOF
+
+          exit "$failure"
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-verification-evidence-${{ github.run_number }}
+          path: artifact/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload verified Android library
         uses: actions/upload-artifact@v4
