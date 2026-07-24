@@ -1,42 +1,160 @@
 --- a/include/albay/search.hpp
 +++ b/include/albay/search.hpp
-@@ -541,7 +541,7 @@
+@@ -487,8 +487,8 @@
+     void apply_shared_smp_diagnostics(SearchDiagnostics& diagnostics) const noexcept;
+     [[nodiscard]] bool check_control();
+     [[nodiscard]] bool hard_limit_reached() const noexcept;
+-    [[nodiscard]] SharedSearchState* shared_state() const noexcept {
+-        return shared_state_ptr_.load(std::memory_order_acquire);
++    [[nodiscard]] std::shared_ptr<SharedSearchState> shared_state() const noexcept {
++        return std::atomic_load_explicit(&shared_state_owner_, std::memory_order_acquire);
+     }
+     [[nodiscard]] std::uint64_t reported_nodes() const noexcept;
+     [[nodiscard]] int reported_selective_depth() const noexcept;
+@@ -541,8 +541,12 @@
  
      std::shared_ptr<TranspositionTable> transposition_table_;
      mutable std::mutex tt_lifecycle_mutex_;
 -    std::atomic<std::shared_ptr<SharedSearchState>> shared_state_owner_{};
-+    std::shared_ptr<SharedSearchState> shared_state_owner_{};
-     std::atomic<SharedSearchState*> shared_state_ptr_{nullptr};
+-    std::atomic<SharedSearchState*> shared_state_ptr_{nullptr};
++    // C++11 portable atomic shared_ptr operations are used instead of
++    // std::atomic<std::shared_ptr<T>>, which is not implemented by every
++    // Android NDK libc++ configuration. Returning a shared_ptr snapshot keeps
++    // the shared search state alive for every caller and avoids raw-pointer
++    // lifetime races during worker teardown/restart.
++    mutable std::shared_ptr<SharedSearchState> shared_state_owner_{};
      bool helper_instance_ = false;
      int worker_index_ = 0;
+     int root_piece_count_ = 0;
 --- a/src/search.cpp
 +++ b/src/search.cpp
-@@ -310,8 +310,12 @@
+@@ -310,8 +310,7 @@
  
      auto shared = std::make_shared<SharedSearchState>(normalized.threads);
      shared->active_thread_limit.store(normalized.active_threads, std::memory_order_release);
 -    shared_state_ptr_.store(shared.get(), std::memory_order_release);
 -    shared_state_owner_.store(shared, std::memory_order_release);
-+    // Publish ownership before the raw pointer. Readers acquire the pointer,
-+    // which also makes the preceding shared_ptr assignment visible. Using the
-+    // C++20 atomic<shared_ptr> specialization is not portable to Android NDK
-+    // libc++, while ownership is only replaced by the owning Searcher thread.
-+    shared_state_owner_ = shared;
-+    shared_state_ptr_.store(shared_state_owner_.get(), std::memory_order_release);
++    std::atomic_store_explicit(&shared_state_owner_, shared, std::memory_order_release);
      std::vector<std::unique_ptr<Searcher>> helpers;
      std::vector<std::jthread> helper_threads;
      helpers.reserve(static_cast<std::size_t>(normalized.threads - 1));
-@@ -464,9 +468,10 @@
+@@ -464,9 +463,8 @@
      const std::atomic<bool>* external_pause_requested,
      std::shared_ptr<SharedSearchState> session_state,
      int worker_index) {
 -    SharedSearchState* state_pointer = session_state.get();
 -    shared_state_ptr_.store(state_pointer, std::memory_order_release);
 -    shared_state_owner_.store(session_state, std::memory_order_release);
-+    // Keep the shared state alive before publishing its raw pointer to
-+    // stop/pause observers. See the Android portability note in search().
-+    shared_state_owner_ = std::move(session_state);
-+    shared_state_ptr_.store(shared_state_owner_.get(), std::memory_order_release);
++    std::atomic_store_explicit(
++        &shared_state_owner_, std::move(session_state), std::memory_order_release);
      worker_index_ = worker_index;
  
      bool expected = false;
+@@ -2239,7 +2237,7 @@
+     ++local_nodes_;
+     local_selective_depth_ = std::max(local_selective_depth_, ply);
+ 
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (limits_.nodes > 0 && state != nullptr && state->configured_threads > 1) {
+         // Node-limited SMP searches need an exact global counter so all workers
+         // observe the limit with only a few in-flight nodes of overshoot.
+@@ -2285,7 +2283,7 @@
+         external_stop_token_.stop_requested()) {
+         return true;
+     }
+-    const SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (state != nullptr &&
+         (state->stop_requested.load(std::memory_order_relaxed) ||
+          state->pause_requested.load(std::memory_order_relaxed))) {
+@@ -2318,7 +2316,7 @@
+ 
+ void Searcher::publish_helper_root_hint(
+     int depth, Score score, const Move& move) noexcept {
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (worker_index_ <= 0 || state == nullptr) {
+         return;
+     }
+@@ -2337,7 +2335,7 @@
+ }
+ 
+ std::optional<Move> Searcher::shared_root_hint(int requested_depth) noexcept {
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (worker_index_ != 0 || state == nullptr || state->configured_threads <= 1) {
+         return std::nullopt;
+     }
+@@ -2352,7 +2350,7 @@
+ }
+ 
+ void Searcher::apply_shared_smp_diagnostics(SearchDiagnostics& diagnostics) const noexcept {
+-    const SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (state == nullptr) {
+         return;
+     }
+@@ -2434,7 +2432,7 @@
+                 shared_state()->active_threads.fetch_sub(1, std::memory_order_acq_rel);
+                 shared_state()->parked_threads.fetch_add(1, std::memory_order_acq_rel);
+             }
+-            SharedSearchState* state = shared_state();
++            auto state = shared_state();
+             std::unique_lock lock(state->thread_policy_mutex);
+             state->thread_policy_condition.wait(lock, [&] {
+                 return !should_park() ||
+@@ -2496,7 +2494,7 @@
+ 
+ bool Searcher::hard_limit_reached() const noexcept {
+     if (limits_.nodes > 0) {
+-        const SharedSearchState* state = shared_state();
++        auto state = shared_state();
+         const std::uint64_t nodes = state != nullptr && state->configured_threads > 1
+             ? state->nodes.load(std::memory_order_relaxed)
+             : local_nodes_;
+@@ -2547,7 +2545,7 @@
+ 
+ bool Searcher::probe_tt(HashKey key, TTEntry& entry) noexcept {
+     ++tt_probes_;
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     const bool multi_threaded = state != nullptr && state->configured_threads > 1;
+     if (multi_threaded) {
+         state->tt_probes.fetch_add(1, std::memory_order_relaxed);
+@@ -2571,7 +2569,7 @@
+     Score score,
+     TTBound bound,
+     const Move* best_move) noexcept {
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     const bool multi_threaded = state != nullptr && state->configured_threads > 1;
+     if (multi_threaded) {
+         transposition_table_->store(key, depth, score, bound, best_move);
+@@ -2586,7 +2584,7 @@
+ 
+ TTStatistics Searcher::current_tt_statistics() const noexcept {
+     TTStatistics result{};
+-    const SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (state != nullptr && state->configured_threads > 1) {
+         result.probes = state->tt_probes.load(std::memory_order_relaxed);
+         result.hits = state->tt_hits.load(std::memory_order_relaxed);
+@@ -2643,7 +2641,7 @@
+ 
+ void Searcher::stop() noexcept {
+     stop_requested_.store(true, std::memory_order_release);
+-    if (SharedSearchState* state = shared_state()) {
++    if (auto state = shared_state()) {
+         state->stop_requested.store(true, std::memory_order_release);
+         state->thread_policy_condition.notify_all();
+     }
+@@ -2669,7 +2667,7 @@
+ }
+ 
+ void Searcher::set_active_thread_limit(int threads) noexcept {
+-    SharedSearchState* state = shared_state();
++    auto state = shared_state();
+     if (state == nullptr) {
+         return;
+     }
