@@ -1,0 +1,42 @@
+--- a/include/albay/search.hpp
++++ b/include/albay/search.hpp
+@@ -541,7 +541,7 @@
+ 
+     std::shared_ptr<TranspositionTable> transposition_table_;
+     mutable std::mutex tt_lifecycle_mutex_;
+-    std::atomic<std::shared_ptr<SharedSearchState>> shared_state_owner_{};
++    std::shared_ptr<SharedSearchState> shared_state_owner_{};
+     std::atomic<SharedSearchState*> shared_state_ptr_{nullptr};
+     bool helper_instance_ = false;
+     int worker_index_ = 0;
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -310,8 +310,12 @@
+ 
+     auto shared = std::make_shared<SharedSearchState>(normalized.threads);
+     shared->active_thread_limit.store(normalized.active_threads, std::memory_order_release);
+-    shared_state_ptr_.store(shared.get(), std::memory_order_release);
+-    shared_state_owner_.store(shared, std::memory_order_release);
++    // Publish ownership before the raw pointer. Readers acquire the pointer,
++    // which also makes the preceding shared_ptr assignment visible. Using the
++    // C++20 atomic<shared_ptr> specialization is not portable to Android NDK
++    // libc++, while ownership is only replaced by the owning Searcher thread.
++    shared_state_owner_ = shared;
++    shared_state_ptr_.store(shared_state_owner_.get(), std::memory_order_release);
+     std::vector<std::unique_ptr<Searcher>> helpers;
+     std::vector<std::jthread> helper_threads;
+     helpers.reserve(static_cast<std::size_t>(normalized.threads - 1));
+@@ -464,9 +468,10 @@
+     const std::atomic<bool>* external_pause_requested,
+     std::shared_ptr<SharedSearchState> session_state,
+     int worker_index) {
+-    SharedSearchState* state_pointer = session_state.get();
+-    shared_state_ptr_.store(state_pointer, std::memory_order_release);
+-    shared_state_owner_.store(session_state, std::memory_order_release);
++    // Keep the shared state alive before publishing its raw pointer to
++    // stop/pause observers. See the Android portability note in search().
++    shared_state_owner_ = std::move(session_state);
++    shared_state_ptr_.store(shared_state_owner_.get(), std::memory_order_release);
+     worker_index_ = worker_index;
+ 
+     bool expected = false;

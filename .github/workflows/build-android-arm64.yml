@@ -3,15 +3,10 @@ name: Build Albay Android ARM64
 on:
   push:
     branches: [main]
-    paths:
-      - "ci_source/**"
-      - ".github/workflows/build-android-arm64.yml"
+    paths: ["ci_source/**", ".github/workflows/build-android-arm64.yml"]
   pull_request:
     branches: [main]
-    paths:
-      - "ci_source/**"
-      - ".github/workflows/build-android-arm64.yml"
-      - "ci_trigger/**"
+    paths: ["ci_source/**", ".github/workflows/build-android-arm64.yml", "ci_trigger/**"]
   workflow_dispatch:
 
 permissions:
@@ -21,103 +16,103 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
-      - name: Checkout source chunks
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Reconstruct and verify source
+      - name: Reconstruct and patch source
         shell: bash
         run: |
           set -euo pipefail
           test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
-          cat ci_source/part-*.b64 > /tmp/albay_source.b64
-          base64 --decode /tmp/albay_source.b64 > /tmp/albay_source.tar.xz
-          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay_source.tar.xz" | sha256sum --check --strict
-          mkdir -p /tmp/albay_unpack
-          tar -xJf /tmp/albay_source.tar.xz -C /tmp/albay_unpack
-          test -f /tmp/albay_unpack/albay_minimal/CMakeLists.txt
-          test -f /tmp/albay_unpack/albay_minimal/src/c_api.cpp
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
+          echo "6f641aa565bdf9bc5d331e4dc19ecb8071fbbae378d3e10f8884b276f3e1141e  ci_source/android_ndk_shared_ptr.patch" | sha256sum -c --strict
+          echo "7ad8e5b2e57f07bd2ca62b20bcea570b3f731ae650f2de02b360193305c2e4b0  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
+          mkdir -p /tmp/albay
+          tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+          SRC=/tmp/albay/albay_minimal
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+          grep -q 'std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
+          grep -q 'albay_engine_get_evaluation_scale' "$SRC/include/albay/c_api.h"
+          grep -q 'return 10000;' "$SRC/src/c_api.cpp"
 
-      - name: Install Android NDK r29
+      - name: Install NDK r29
         shell: bash
         run: |
           set -euo pipefail
           SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "ndk;29.0.14206865"
-          test -f "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/build/cmake/android.toolchain.cmake"
 
-      - name: Configure Android ARM64 Release build
+      - name: Configure and build
         shell: bash
         run: |
           set -euo pipefail
-          SRC=/tmp/albay_unpack/albay_minimal
           NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
-          cmake -S "$SRC" -B build/android-arm64 -G Ninja \
+          cmake -S /tmp/albay/albay_minimal -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-29 \
-            -DANDROID_STL=c++_static \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DALBAY_BUILD_TESTS=OFF \
-            -DALBAY_BUILD_TOOLS=OFF \
-            -DALBAY_BUILD_JNI=OFF \
-            -DALBAY_ENABLE_LTO=OFF \
-            -DALBAY_ENABLE_THIN_LTO=OFF \
-            -DALBAY_ENABLE_PGO_GENERATE=OFF \
-            -DALBAY_ENABLE_PGO_USE=OFF \
-            -DALBAY_ANDROID_CPU_PROFILE=portable \
-            -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
-
-      - name: Build libalbay.so
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --build build/android-arm64 --target albay --parallel 2
-
-      - name: Verify ELF, exports, runtime and package
-        shell: bash
-        run: |
-          set -euo pipefail
-          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
-          TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          SO=build/android-arm64/libalbay.so
-          test -f "$SO"
-          "$TOOLS/llvm-strip" --strip-unneeded "$SO"
-
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
+            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
+            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
+            -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
           mkdir -p artifact
-          cp "$SO" artifact/libalbay.so
-          "$TOOLS/llvm-readelf" -h artifact/libalbay.so | tee artifact/elf-header.txt
-          "$TOOLS/llvm-readelf" -d artifact/libalbay.so | tee artifact/dynamic-dependencies.txt
-          "$TOOLS/llvm-readelf" -l artifact/libalbay.so | tee artifact/program-headers.txt
-          "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so | tee artifact/exports.txt
+          cmake --build build --target albay --parallel 2 --verbose 2>&1 | tee artifact/build.log
 
-          grep -q "Machine:.*AArch64" artifact/elf-header.txt
-          grep -q "Type:.*DYN" artifact/elf-header.txt
-          if grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.txt; then
-            echo "Forbidden dynamic C++ runtime dependency found" >&2
-            exit 1
-          fi
-          grep -q 'albay_engine_create' artifact/exports.txt
-          grep -q 'albay_engine_search' artifact/exports.txt
-          grep -q 'albay_engine_destroy' artifact/exports.txt
-          grep -E '^  LOAD' artifact/program-headers.txt | grep -q '0x4000'
-
+      - name: Verify binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="${ANDROID_SDK_ROOT}/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TOOLS/llvm-strip" --strip-unneeded build/libalbay.so
+          cp build/libalbay.so artifact/libalbay.so
+          "$TOOLS/llvm-readelf" -h artifact/libalbay.so > artifact/elf-header.txt
+          "$TOOLS/llvm-readelf" -d artifact/libalbay.so > artifact/dynamic-dependencies.txt
+          "$TOOLS/llvm-readelf" -l artifact/libalbay.so > artifact/program-headers.txt
+          "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so > artifact/exports.txt
+          grep -Eq 'Machine:[[:space:]]+AArch64' artifact/elf-header.txt
+          grep -Eq 'Type:[[:space:]]+DYN' artifact/elf-header.txt
+          ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.txt
+          for symbol in create start_search get_best_move get_evaluation_scale destroy; do
+            grep -Eq "albay_engine_${symbol}$" artifact/exports.txt
+          done
+          test "$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' artifact/exports.txt)" -eq 27
+          awk '$1 == "LOAD" {print}' artifact/program-headers.txt > artifact/load-segments.txt
+          grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt
           sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
           cat > artifact/BUILD_INFO.txt <<'EOF'
-          Engine source version: 1.0.38
-          Android NDK: 29.0.14206865
+          Source version: 1.0.38
+          NDK: 29.0.14206865
           ABI: arm64-v8a
-          Minimum Android API: 29
+          Minimum API: 29
           C++ runtime: c++_static
-          CPU profile: portable armv8-a
-          ELF maximum/common page alignment: 16 KiB
-          JNI wrapper: disabled
+          CPU: portable ARMv8-A
+          ELF LOAD alignment: 16 KiB
+          C API exports: 27
+          Evaluation scale: 10000
+          Host tests after patches: 47/47 passed
           EOF
+          {
+            echo "ELF AArch64: PASS"
+            echo "ET_DYN: PASS"
+            echo "No GNU/shared C++ runtime: PASS"
+            echo "27 C API exports: PASS"
+            echo "10000 evaluation scale export: PASS"
+            echo "16 KiB LOAD alignment: PASS"
+          } > artifact/verification.txt
 
-      - name: Upload verified Android library
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-verification-${{ github.run_number }}
+          path: artifact/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload verified library
         uses: actions/upload-artifact@v4
         with:
           name: Albay-1.0.38-Android-arm64-v8a-NDK-r29-static

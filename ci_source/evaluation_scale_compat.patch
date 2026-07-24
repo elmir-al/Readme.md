@@ -1,0 +1,23 @@
+--- a/include/albay/c_api.h
++++ b/include/albay/c_api.h
+@@ -141,6 +141,7 @@
+     const albay_engine* engine, char* buffer, size_t capacity, size_t* required_size);
+ ALBAY_API albay_status albay_engine_get_multipv(
+     const albay_engine* engine, char* buffer, size_t capacity, size_t* required_size);
++ALBAY_API int32_t albay_engine_get_evaluation_scale(void);
+ ALBAY_API int32_t albay_engine_evaluate_position(const albay_engine* engine);
+ ALBAY_API int32_t albay_engine_is_searching(const albay_engine* engine);
+ ALBAY_API const char* albay_engine_get_name(void);
+--- a/src/c_api.cpp
++++ b/src/c_api.cpp
+@@ -381,6 +381,10 @@
+     }
+ }
+ 
++int32_t albay_engine_get_evaluation_scale(void) {
++    return 10000;
++}
++
+ int32_t albay_engine_evaluate_position(const albay_engine* engine) {
+     if (engine == nullptr) {
+         return 0;
