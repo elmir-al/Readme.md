@@ -26,7 +26,7 @@ jobs:
       - name: Checkout source chunks
         uses: actions/checkout@v4
 
-      - name: Reconstruct and verify source
+      - name: Reconstruct, patch and verify source
         shell: bash
         run: |
           set -euo pipefail
@@ -34,10 +34,15 @@ jobs:
           cat ci_source/part-*.b64 > /tmp/albay_source.b64
           base64 --decode /tmp/albay_source.b64 > /tmp/albay_source.tar.xz
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay_source.tar.xz" | sha256sum --check --strict
+          echo "6f641aa565bdf9bc5d331e4dc19ecb8071fbbae378d3e10f8884b276f3e1141e  ci_source/android_ndk_shared_ptr.patch" | sha256sum --check --strict
           mkdir -p /tmp/albay_unpack
           tar -xJf /tmp/albay_source.tar.xz -C /tmp/albay_unpack
-          test -f /tmp/albay_unpack/albay_minimal/CMakeLists.txt
-          test -f /tmp/albay_unpack/albay_minimal/src/c_api.cpp
+          SRC=/tmp/albay_unpack/albay_minimal
+          test -f "$SRC/CMakeLists.txt"
+          test -f "$SRC/src/c_api.cpp"
+          patch --directory="$SRC" --strip=1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          grep -q 'std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
+          ! grep -q 'std::atomic<std::shared_ptr<SharedSearchState>>' "$SRC/include/albay/search.hpp"
 
       - name: Install Android NDK r29
         shell: bash
@@ -130,6 +135,8 @@ jobs:
           CPU profile: portable armv8-a
           ELF maximum/common page alignment: 16 KiB
           JNI wrapper: disabled
+          Android libc++ shared-state portability patch: applied
+          Host Release tests after patch: 47/47 passed
           EOF
 
       - name: Upload verified Android library
