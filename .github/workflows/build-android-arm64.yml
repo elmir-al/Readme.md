@@ -6,6 +6,12 @@ on:
     paths:
       - "ci_source/**"
       - ".github/workflows/build-android-arm64.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci_source/**"
+      - ".github/workflows/build-android-arm64.yml"
+      - "ci_trigger/**"
   workflow_dispatch:
 
 permissions:
