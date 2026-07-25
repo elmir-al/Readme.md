@@ -1,0 +1,58 @@
+name: Debug V14 Reconstruction
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/debug-v14-reconstruct.yml"
+      - "ci_source/v14_hotpath_1043.patch.gz.b64"
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture reconstruction diagnostics
+        shell: bash
+        run: |
+          mkdir -p artifact
+          set +e
+          {
+            echo "STEP source-count"
+            find ci_source -maxdepth 1 -name 'part-*.b64' | sort
+            echo "STEP reconstruct-base"
+            cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+            sha256sum /tmp/albay.tar.xz
+            rm -rf /tmp/albay && mkdir -p /tmp/albay
+            tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+            SRC=/tmp/albay/albay_minimal
+            echo "STEP legacy-patches"
+            patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+            patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+            patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+            echo "STEP decode-v14"
+            sha256sum ci_source/v14_hotpath_1043.patch.gz.b64
+            base64 --decode ci_source/v14_hotpath_1043.patch.gz.b64 | gzip -dc > /tmp/v14.patch
+            sha256sum /tmp/v14.patch
+            wc -c -l /tmp/v14.patch
+            echo "STEP apply-v14"
+            patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/v14.patch
+            status=$?
+            echo "PATCH_STATUS=$status"
+            echo "STEP gates"
+            grep -n 'kEngineVersion = "1.0.43"' "$SRC/include/albay/types.hpp"
+            grep -n 'const bool live_search = is_searching();' "$SRC/src/search.cpp"
+            grep -n 'P31_CHECK(final_info.nodes == 0);' "$SRC/tests/strength_phase31_tests.cpp"
+            echo "DONE"
+          } > artifact/reconstruct-diagnostics.txt 2>&1
+          exit 0
+      - name: Upload reconstruction diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: V14-reconstruction-diagnostics
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 3
