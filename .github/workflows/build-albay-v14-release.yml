@@ -5,6 +5,11 @@ on:
     branches: [albay-v14-turbo-build]
     paths:
       - ".github/workflows/build-albay-v14-release.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci_source/v14_hotpath_1043.patch.gz.b64"
+      - ".github/workflows/build-albay-v14-release.yml"
   workflow_dispatch:
 
 permissions:
