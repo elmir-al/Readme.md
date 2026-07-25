@@ -33,13 +33,15 @@ jobs:
           patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
           patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
           patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
-          echo "ec59e2049a9967ba2109afd5c99bfc98819321144d9d90fe70a3e3693e5c2fae  ci_source/v14_hotpath_1043.patch.gz.b64" | sha256sum -c --strict
+          echo "f2eb45c5f194e9f34f36b816743332c103492948ad10ea203aab8b06c4785b34  ci_source/v14_hotpath_1043.patch.gz.b64" | sha256sum -c --strict
           base64 --decode ci_source/v14_hotpath_1043.patch.gz.b64 | gzip -dc > /tmp/v14.patch
-          echo "29e4044959dec5621dbd24ac874f88d144a68b9cad47711f3c9076758e962e16  /tmp/v14.patch" | sha256sum -c --strict
+          echo "78fcc4170b50c03089a8649277fc8def5e1ce840ed9d60418fc881da9c6fb5e9  /tmp/v14.patch" | sha256sum -c --strict
           patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/v14.patch
           grep -q 'kEngineVersion = "1.0.43"' "$SRC/include/albay/types.hpp"
           grep -q 'std::atomic<SharedSearchState\*> session_state_raw_' "$SRC/include/albay/search.hpp"
           grep -q 'session_state_raw_.store(session_raw' "$SRC/src/search.cpp"
+          grep -q 'exact_root_tablebase_result' "$SRC/src/search.cpp"
+          grep -q 'options.threads = 4' "$SRC/tests/strength_phase31_tests.cpp"
           grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
 
       - name: Install NDK r29
@@ -98,6 +100,7 @@ jobs:
           ELF LOAD alignment: 16 KiB
           C API exports: 27
           Hot path: atomic non-owning search-session pointer with owning shared_ptr lifetime guard
+          Root exact-tablebase SMP telemetry: preserves nodes=0 and DTW selective depth
           ThinLTO/PGO: disabled after non-positive controlled host comparisons
           Russian king forced-continuation source gate: PASS
           Physical Android/Pydroid thermal and long-game validation: pending on device
@@ -109,6 +112,7 @@ jobs:
             echo "27 C API exports: PASS"
             echo "16 KiB LOAD alignment: PASS"
             echo "Albay 1.0.43 hot-path source gate: PASS"
+            echo "Root exact-tablebase SMP telemetry source gate: PASS"
             echo "Russian forced-continuation source gate: PASS"
           } > artifact/verification.txt
 
