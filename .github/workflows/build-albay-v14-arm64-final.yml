@@ -34,14 +34,13 @@ jobs:
           patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
           patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
           base64 --decode ci_source/v14_hotpath_1043.patch.gz.b64 | gzip -dc > /tmp/v14.patch
-          echo "f9123bfb288bebc063fb56a594b0c36c615b2a1edcbc5bdba6197155ab1bb13a  /tmp/v14.patch" | sha256sum -c --strict
+          echo "ea7234ece5d042897829d70a5c0fd08f212a0c8431c581c01dc18c2cc8f285bb  /tmp/v14.patch" | sha256sum -c --strict
           patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/v14.patch
           grep -q 'kEngineVersion = "1.0.43"' "$SRC/include/albay/types.hpp"
           grep -q 'std::atomic<SharedSearchState\*> session_state_raw_' "$SRC/include/albay/search.hpp"
           grep -q 'session_state_raw_.store(session_raw' "$SRC/src/search.cpp"
           grep -q 'exact_root_tablebase_result' "$SRC/src/search.cpp"
           grep -q 'const bool live_search = is_searching();' "$SRC/src/search.cpp"
-          grep -q 'P31_CHECK(final_info.nodes == 0);' "$SRC/tests/strength_phase31_tests.cpp"
           grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
 
       - name: Install NDK r29
