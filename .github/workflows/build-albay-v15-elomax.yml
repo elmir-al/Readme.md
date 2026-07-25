@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct Albay V14 and apply V15 patch
+      - name: Reconstruct Albay 1.0.42 and apply V15 patch
         shell: bash
         run: |
           set -euo pipefail
@@ -39,9 +39,10 @@ jobs:
           patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
           patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
           base64 --decode ci_source/v15_elomax_1044.patch.gz.b64 | gzip -dc > /tmp/v15.patch
-          echo "4e34ae2dfd87441ce368daa2ffed283ab75faa2f297311c0f789193b3c5e2f65  /tmp/v15.patch" | sha256sum -c --strict
+          echo "b6d0cf352a78496354dd965541a355c1241bdd853a557e0e3760edd8530e5b12  /tmp/v15.patch" | sha256sum -c --strict
           patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/v15.patch
           grep -q 'kEngineVersion = "1.0.44"' "$SRC/include/albay/types.hpp"
+          grep -q 'session_state_raw_' "$SRC/include/albay/search.hpp"
           grep -q 'evaluate_assuming_valid' "$SRC/include/albay/nnue.hpp"
           grep -q 'const bool live_search = is_searching();' "$SRC/src/search.cpp"
           grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
