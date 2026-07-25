@@ -1,0 +1,177 @@
+name: Build Albay 1.0.45 V15.3 StackSafe ARM64
+
+on:
+  push:
+    branches: [albay-v15-3-stackfix-build]
+    paths:
+      - "ci_source/v15_3_stackfix-part-*.b64"
+      - ".github/workflows/build-albay-v15-3-stackfix.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci_source/v15_3_stackfix-part-*.b64"
+      - ".github/workflows/build-albay-v15-3-stackfix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source and apply V15.3 stack-safety patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          exec > >(tee artifact/reconstruct.log) 2>&1
+          test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
+          rm -rf /tmp/albay && mkdir -p /tmp/albay
+          tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+          SRC=/tmp/albay/albay_minimal
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+          test "$(find ci_source -maxdepth 1 -name 'v15_3_stackfix-part-*.b64' | wc -l)" -eq 8
+          cat ci_source/v15_3_stackfix-part-*.b64 | base64 --decode | gzip -dc > /tmp/v15_3.patch
+          echo "17fe54f181be909c039df2a2d6d59ceaec129982704e1063a524395764ca8c98  /tmp/v15_3.patch" | sha256sum -c --strict
+          patch -d "$SRC" -p2 --forward --batch --verbose < /tmp/v15_3.patch
+          grep -q 'kEngineVersion = "1.0.45"' "$SRC/include/albay/types.hpp"
+          grep -q 'kInlineCapacity = 32' "$SRC/include/albay/move.hpp"
+          grep -q 'MoveList is too large for recursive Android search frames' "$SRC/include/albay/move.hpp"
+          grep -q 'evaluate_assuming_valid' "$SRC/include/albay/nnue.hpp"
+          grep -q 'const bool live_search = is_searching();' "$SRC/src/search.cpp"
+          grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
+
+      - name: Host build and 256 KiB stack regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF
+          cmake --build host --target albay --parallel 2
+          cat > /tmp/stack_regression.cpp <<'CPP'
+          #include "albay/c_api.h"
+          #include <chrono>
+          #include <cstdio>
+          #include <cstdlib>
+          #include <string>
+          #include <thread>
+          #include <vector>
+          struct P { const char* label; const char* apf; int ms; };
+          static const P positions[] = {
+            {"initial","W:Wa3,c3,e3,g3,b2,d2,f2,h2,a1,c1,e1,g1:Bb8,d8,f8,h8,a7,c7,e7,g7,b6,d6,f6,h6;NP=0",180},
+            {"combo","B:Wf4,f2,h2,a1,c1:Bb8,f8,h8,a7,e7,g7,d6,a5,b4,Ke1;NP=0",180},
+            {"middle","W:Wc5,e3,g3,b2,d2,f2,h2,a1,c1,e1,g1:Bb8,d8,f8,h8,a7,e7,g7,b6,f6,h6,a5;NP=0",300},
+            {"video","W:Wc5,b4,d4,h4,e3,d2,a1,c1,e1:Bb8,h8,c7,e7,f6,h6,g5,f4,a3;NP=0",1200},
+            {"error","W:Wc5,b4,d4,h4,c3,a1,e1:Bb8,h8,c7,e7,f6,h6,g5,f4,d2,Kc1;NP=0",1200},
+            {"current","W:Wc5,b4,d4,h4,c3,a1,e1:Bb8,h8,c7,e7,f6,h6,g5,d2,Kc1;NP=0",2500},
+            {"capture","W:We3,Ka1:Bg5,a3,c3;NP=0",400},
+          };
+          static void check(albay_status s, const char* where) { if (s != ALBAY_STATUS_OK) { std::fprintf(stderr, "%s status=%d\n", where, int(s)); std::exit(2); } }
+          static std::string text(const albay_engine* e, albay_status(*fn)(const albay_engine*,char*,size_t,size_t*)) {
+            size_t n=0; auto s=fn(e,nullptr,0,&n); if(s!=ALBAY_STATUS_OK && s!=ALBAY_STATUS_BUFFER_TOO_SMALL) return {};
+            std::vector<char> b(n?n:1); check(fn(e,b.data(),b.size(),&n),"text"); return std::string(b.data());
+          }
+          int main() {
+            auto* e=albay_engine_create(); if(!e) return 2;
+            check(albay_engine_set_option(e,"Hash","64"),"hash");
+            check(albay_engine_set_option(e,"Threads","2"),"threads");
+            check(albay_engine_set_option(e,"AutoThreads","false"),"auto_threads");
+            check(albay_engine_set_option(e,"ExactEndgameSolver","false"),"solver");
+            for(const auto& p: positions) {
+              check(albay_engine_set_position(e,p.apf),"position");
+              albay_search_limits limits{}; limits.struct_size=sizeof(limits); limits.depth=64; limits.move_time_ms=p.ms;
+              check(albay_engine_start_search(e,&limits),"start");
+              while(albay_engine_is_searching(e)) {
+                albay_search_info info{}; info.struct_size=sizeof(info); check(albay_engine_get_search_info(e,&info),"info");
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+              }
+              albay_search_info info{}; info.struct_size=sizeof(info); check(albay_engine_get_search_info(e,&info),"final");
+              const auto move=text(e,albay_engine_get_best_move);
+              if(move.empty()) { std::fprintf(stderr,"%s returned no move\n",p.label); return 3; }
+              std::printf("%s move=%s depth=%d nodes=%llu time=%llu\n",p.label,move.c_str(),info.depth,
+                static_cast<unsigned long long>(info.nodes),static_cast<unsigned long long>(info.elapsed_ms));
+            }
+            albay_engine_destroy(e);
+            return 0;
+          }
+          CPP
+          c++ -std=c++20 -O2 -I"$SRC/include" /tmp/stack_regression.cpp \
+            -Lhost -lalbay -pthread -Wl,-rpath,"$PWD/host" -o /tmp/stack_regression
+          (ulimit -s 256; /tmp/stack_regression) | tee artifact/LOW_STACK_256K_REGRESSION.txt
+          grep -q '^current move=c5-b6 ' artifact/LOW_STACK_256K_REGRESSION.txt
+          grep -q '^capture move=a1xf6xh4 ' artifact/LOW_STACK_256K_REGRESSION.txt
+
+      - name: Install Android NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "ndk;29.0.14206865"
+
+      - name: Build portable Android ARM64 library
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B android-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
+            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
+            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
+            -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
+          cmake --build android-build --target albay --parallel 2 --verbose 2>&1 | tee artifact/android-build.log
+
+      - name: Verify and package Android binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="${ANDROID_SDK_ROOT}/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TOOLS/llvm-strip" --strip-unneeded android-build/libalbay.so
+          cp android-build/libalbay.so artifact/libalbay.so
+          "$TOOLS/llvm-readelf" -h artifact/libalbay.so > artifact/elf-header.txt
+          "$TOOLS/llvm-readelf" -d artifact/libalbay.so > artifact/dynamic-dependencies.txt
+          "$TOOLS/llvm-readelf" -l artifact/libalbay.so > artifact/program-headers.txt
+          "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so > artifact/exports.txt
+          grep -Eq 'Machine:[[:space:]]+AArch64' artifact/elf-header.txt
+          grep -Eq 'Type:[[:space:]]+DYN' artifact/elf-header.txt
+          ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.txt
+          test "$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' artifact/exports.txt)" -eq 27
+          awk '$1 == "LOAD" {print}' artifact/program-headers.txt > artifact/load-segments.txt
+          grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt
+          sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
+          cat > artifact/BUILD_INFO.txt <<'EOF'
+          Engine: Albay 1.0.45 V15.3 StackSafe
+          NDK: 29.0.14206865
+          ABI: arm64-v8a
+          Minimum API: 29
+          C++ runtime: c++_static
+          CPU: portable ARMv8-A
+          ELF LOAD alignment: 16 KiB
+          C API exports: 27
+          MoveList: 32-move inline small buffer with 512-move heap overflow capacity
+          Host 256 KiB stack reproduction sequence: PASS
+          Russian forced continuation: retained
+          EloMax evaluation/search features: retained
+          EOF
+
+      - name: Upload verified V15.3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-1.0.45-V15.3-StackSafe-Android-arm64-v8a-NDK-r29
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
