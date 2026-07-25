@@ -1,0 +1,135 @@
+name: Build Albay 1.0.44 V15 EloMax ARM64
+
+on:
+  push:
+    branches: [albay-v15-elomax-build]
+    paths:
+      - "ci_source/v15_elomax_1044.patch.gz.b64"
+      - ".github/workflows/build-albay-v15-elomax.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci_source/v15_elomax_1044.patch.gz.b64"
+      - ".github/workflows/build-albay-v15-elomax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct Albay V14 and apply V15 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          exec > >(tee artifact/reconstruct.log) 2>&1
+          test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
+          rm -rf /tmp/albay && mkdir -p /tmp/albay
+          tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+          SRC=/tmp/albay/albay_minimal
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+          base64 --decode ci_source/v15_elomax_1044.patch.gz.b64 | gzip -dc > /tmp/v15.patch
+          echo "4e34ae2dfd87441ce368daa2ffed283ab75faa2f297311c0f789193b3c5e2f65  /tmp/v15.patch" | sha256sum -c --strict
+          patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/v15.patch
+          grep -q 'kEngineVersion = "1.0.44"' "$SRC/include/albay/types.hpp"
+          grep -q 'evaluate_assuming_valid' "$SRC/include/albay/nnue.hpp"
+          grep -q 'const bool live_search = is_searching();' "$SRC/src/search.cpp"
+          grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
+
+      - name: Install NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "ndk;29.0.14206865"
+
+      - name: Build portable ARMv8-A
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B build-portable -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
+            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
+            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
+            -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
+          cmake --build build-portable --target albay --parallel 2 --verbose 2>&1 | tee artifact/build-portable.log
+
+      - name: Build SM-S931B Oryon specialised binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B build-oryon -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
+            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
+            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
+            -DALBAY_ANDROID_CPU_PROFILE=custom -DALBAY_ANDROID_CUSTOM_MCPU=oryon-1 \
+            -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
+          cmake --build build-oryon --target albay --parallel 2 --verbose 2>&1 | tee artifact/build-oryon.log
+
+      - name: Verify and package both libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="${ANDROID_SDK_ROOT}/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TOOLS/llvm-strip" --strip-unneeded build-portable/libalbay.so
+          "$TOOLS/llvm-strip" --strip-unneeded build-oryon/libalbay.so
+          cp build-portable/libalbay.so artifact/libalbay.so
+          cp build-oryon/libalbay.so artifact/libalbay_oryon.so
+          for lib in artifact/libalbay.so artifact/libalbay_oryon.so; do
+            base=$(basename "$lib" .so)
+            "$TOOLS/llvm-readelf" -h "$lib" > "artifact/${base}-elf-header.txt"
+            "$TOOLS/llvm-readelf" -d "$lib" > "artifact/${base}-dependencies.txt"
+            "$TOOLS/llvm-readelf" -l "$lib" > "artifact/${base}-program-headers.txt"
+            "$TOOLS/llvm-nm" -D --defined-only "$lib" > "artifact/${base}-exports.txt"
+            grep -Eq 'Machine:[[:space:]]+AArch64' "artifact/${base}-elf-header.txt"
+            grep -Eq 'Type:[[:space:]]+DYN' "artifact/${base}-elf-header.txt"
+            ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' "artifact/${base}-dependencies.txt"
+            test "$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' "artifact/${base}-exports.txt")" -eq 27
+            awk '$1 == "LOAD" {print}' "artifact/${base}-program-headers.txt" > "artifact/${base}-load-segments.txt"
+            grep -Eq '0x0*4000([[:space:]]|$)' "artifact/${base}-load-segments.txt"
+          done
+          sha256sum artifact/libalbay.so artifact/libalbay_oryon.so > artifact/SHA256SUMS.txt
+          cat > artifact/BUILD_INFO.txt <<'EOF'
+          Engine: Albay 1.0.44 V15 EloMax
+          NDK: 29.0.14206865
+          ABI: arm64-v8a
+          Minimum API: 29
+          C++ runtime: c++_static
+          Portable binary: ARMv8-A
+          Specialised binary: -mcpu=oryon-1, selected only for Samsung SM-S931B
+          ELF LOAD alignment: 16 KiB
+          C API exports: 27 per binary
+          V14 hot-path optimisation: retained
+          V15 NNUE accumulator fast path: enabled
+          Russian forced continuation: retained
+          Physical-device arena/thermal validation: pending
+          EOF
+
+      - name: Upload verified V15 libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-1.0.44-V15-EloMax-Android-arm64-v8a-NDK-r29
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
