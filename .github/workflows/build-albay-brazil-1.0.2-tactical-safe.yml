@@ -51,6 +51,15 @@ jobs:
           grep -q 'reported_opening_blunder' "$SRC/tests/smp_tests.cpp"
           echo "Brazilian 1.0.2 tactical-safe source gates: PASS"
 
+      - name: Upload reconstruction diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-Brazilian-1.0.2-Reconstruction-Failure
+          path: artifact/reconstruct.log
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Install Android NDK r29
         shell: bash
         run: |
