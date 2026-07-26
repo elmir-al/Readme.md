@@ -1,0 +1,47 @@
+name: Debug Brazilian 1.0.2 StrengthFix Patch
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/debug-brazil102-strengthfix.yml"
+      - "ci_source/brazil102-strengthfix.patch.gz.b64"
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and record patch diagnostics
+        shell: bash
+        run: |
+          set +e
+          mkdir -p artifact
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          rm -rf /tmp/albay && mkdir -p /tmp/albay
+          tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+          SRC=/tmp/albay/albay_minimal
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch > artifact/base1.log 2>&1
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch > artifact/base2.log 2>&1
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch > artifact/base3.log 2>&1
+          cat ci_source/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
+          patch -d "$SRC" -p1 --batch < /tmp/brazil101.patch > artifact/brazil101.log 2>&1
+          echo $? > artifact/brazil101.status
+          sed -i 's/929907/929905/g' "$SRC/src/release.cpp"
+          base64 --decode ci_source/brazil102-strengthfix.patch.gz.b64 | gzip -dc > /tmp/brazil102.patch
+          sha256sum /tmp/brazil102.patch > artifact/brazil102.sha256
+          patch -d "$SRC" -p1 --forward --batch < /tmp/brazil102.patch > artifact/brazil102.log 2>&1
+          echo $? > artifact/brazil102.status
+          grep -R "kEngineVersion\|use_brazilian_full_window_root\|BrazilianFullWindowRoot" -n "$SRC/include" "$SRC/src" > artifact/gates.log 2>&1
+          find "$SRC" -maxdepth 3 -type f | sort > artifact/files.log
+          exit 0
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Brazilian-1.0.2-StrengthFix-Patch-Diagnostics
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 3
