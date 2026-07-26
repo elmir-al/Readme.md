@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - agent/albay-ndk-r29-toolchain
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -44,7 +41,7 @@ jobs:
           find "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" -maxdepth 1 -type l \
             \( -name 'armv7a-*' -o -name 'i686-*' -o -name 'x86_64-*' -o -name 'riscv64-*' \) \
             -delete
-          tar -I 'zstd -19 -T0' -cf android-ndk-r29-arm64-toolchain.tar.zst android-ndk-r29
+          tar -I 'zstd -3 -T0' -cf android-ndk-r29-arm64-toolchain.tar.zst android-ndk-r29
           sha256sum android-ndk-r29-arm64-toolchain.tar.zst > android-ndk-r29-arm64-toolchain.tar.zst.sha256
           ls -lh android-ndk-r29-arm64-toolchain.tar.zst*
 
