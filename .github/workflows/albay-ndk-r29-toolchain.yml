@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/albay-ndk-r29-toolchain
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
