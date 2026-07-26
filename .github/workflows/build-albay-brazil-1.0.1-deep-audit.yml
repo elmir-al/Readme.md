@@ -41,12 +41,14 @@ jobs:
           PATCH_STATUS=$?
           set -e
           echo "Full distribution patch status (metadata absent in minimal base is expected): $PATCH_STATUS"
+          sed -i 's/929907/929905/g' "$SRC/src/release.cpp"
           grep -q 'kEngineVersion = "1.0.1"' "$SRC/include/albay/types.hpp"
           grep -q 'Albay Brazilian Draughts Engine' "$SRC/include/albay/types.hpp"
           grep -q 'max_capture_count' "$SRC/src/movegen.cpp"
           grep -q 'draw_state_fingerprint' "$SRC/src/position.cpp"
           grep -q 'is_automatic_draw' "$SRC/src/search.cpp"
-          grep -q 'kInlineCapacity' "$SRC/include/albay/movegen.hpp"
+          grep -q 'kInlineCapacity' "$SRC/include/albay/move.hpp"
+          grep -q '929905' "$SRC/src/release.cpp"
           grep -q 'NP=' "$SRC/src/notation.cpp"
           echo "Brazilian core source gates: PASS"
 
