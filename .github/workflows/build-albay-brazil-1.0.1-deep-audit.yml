@@ -30,9 +30,6 @@ jobs:
           rm -rf /tmp/albay && mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           SRC=/tmp/albay/albay_minimal
-          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
           test "$(find ci_source -maxdepth 1 -name 'brazil101-part-*.b64' | wc -l)" -eq 8
           cat ci_source/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
           echo "f27fb87e3571826f41e9480d4c21cb7d864536caf7771c214a539a86bc08e9b8  /tmp/brazil101.patch" | sha256sum -c --strict
