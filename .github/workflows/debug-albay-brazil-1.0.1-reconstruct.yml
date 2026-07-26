@@ -16,58 +16,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Capture diagnostics
+      - name: Capture chunk diagnostics
         shell: bash
         run: |
           mkdir -p artifact
           set +e
           {
-            echo '=== FILES ==='
-            find ci_source -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-            echo '=== BASE ==='
-            cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
-            echo base_decode_status=$?
-            sha256sum /tmp/albay.tar.xz
-            echo '=== EXTRACT ==='
-            rm -rf /tmp/albay && mkdir -p /tmp/albay
-            tar -xJvf /tmp/albay.tar.xz -C /tmp/albay | head -30
-            echo tar_status=${PIPESTATUS[0]}
-            find /tmp/albay -maxdepth 2 -type d | sort | head -30
-            SRC=/tmp/albay/albay_minimal
-            test -f "$SRC/CMakeLists.txt"; echo source_status=$?
-            echo '=== CARRIER ==='
+            echo '=== CHUNK SHA256 ==='
+            sha256sum ci_source/brazil101-part-*.b64
+            echo '=== CHUNK SHA1 BLOB ==='
+            python3 - <<'PY'
+          import hashlib, glob, pathlib
+          for name in sorted(glob.glob('ci_source/brazil101-part-*.b64')):
+              b=pathlib.Path(name).read_bytes()
+              print(pathlib.Path(name).name, len(b), hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest())
+          PY
             cat ci_source/brazil101-part-*.b64 > /tmp/brazil101.b64
+            echo '=== CONCAT ==='
             wc -c /tmp/brazil101.b64
             sha256sum /tmp/brazil101.b64
             base64 --decode /tmp/brazil101.b64 > /tmp/brazil101.patch.gz
-            echo b64_decode_status=$?
-            wc -c /tmp/brazil101.patch.gz
+            echo decode_status=$?
             sha256sum /tmp/brazil101.patch.gz
             gzip -t /tmp/brazil101.patch.gz
-            echo gzip_test_status=$?
-            gzip -dc /tmp/brazil101.patch.gz > /tmp/brazil101.patch
-            echo gzip_decode_status=$?
-            wc -c -l /tmp/brazil101.patch
-            sha256sum /tmp/brazil101.patch
-            echo '=== PATCH HEAD ==='
-            head -10 /tmp/brazil101.patch
-            echo '=== DRY RUN ==='
-            patch -d "$SRC" -p1 --dry-run --batch --verbose < /tmp/brazil101.patch
-            echo dry_run_status=$?
-            echo '=== APPLY ==='
-            patch -d "$SRC" -p1 --batch --verbose < /tmp/brazil101.patch
-            echo patch_status=$?
-            echo '=== GATES ==='
-            grep -n 'kEngineVersion = "1.0.1"' "$SRC/include/albay/types.hpp"; echo version_gate=$?
-            grep -n 'draw_state_fingerprint' "$SRC/src/position.cpp"; echo fingerprint_gate=$?
-            grep -n 'is_automatic_draw' "$SRC/src/search.cpp"; echo draw_gate=$?
+            echo gzip_status=$?
           } > artifact/debug.log 2>&1
           exit 0
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Albay-Brazilian-1.0.1-Reconstruction-Diagnostics
+          name: Albay-Brazilian-1.0.1-Chunk-Diagnostics
           path: artifact/
           if-no-files-found: error
           retention-days: 3
