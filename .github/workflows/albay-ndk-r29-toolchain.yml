@@ -28,7 +28,7 @@ jobs:
           unzip -q android-ndk-r29-linux.zip
           grep -q 'Pkg.Revision = 29.0.14206865' android-ndk-r29/source.properties
 
-      - name: Keep only Linux ARM64 build toolchain
+      - name: Package ARM64 toolchain in downloadable parts
         shell: bash
         run: |
           set -euxo pipefail
@@ -46,15 +46,44 @@ jobs:
             -delete
           tar -I 'zstd -3 -T0' -cf android-ndk-r29-arm64-toolchain.tar.zst android-ndk-r29
           sha256sum android-ndk-r29-arm64-toolchain.tar.zst > android-ndk-r29-arm64-toolchain.tar.zst.sha256
-          ls -lh android-ndk-r29-arm64-toolchain.tar.zst*
+          split -b 240M -d -a 2 android-ndk-r29-arm64-toolchain.tar.zst toolchain.part-
+          test -f toolchain.part-00
+          test -f toolchain.part-01
+          test -f toolchain.part-02
+          ls -lh toolchain.part-* android-ndk-r29-arm64-toolchain.tar.zst.sha256
 
-      - name: Upload toolchain
+      - name: Upload toolchain part 00
         uses: actions/upload-artifact@v4
         with:
-          name: albay-android-ndk-r29-arm64-toolchain
-          path: |
-            android-ndk-r29-arm64-toolchain.tar.zst
-            android-ndk-r29-arm64-toolchain.tar.zst.sha256
+          name: albay-ndk-r29-part-00
+          path: toolchain.part-00
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload toolchain part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-ndk-r29-part-01
+          path: toolchain.part-01
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload toolchain part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-ndk-r29-part-02
+          path: toolchain.part-02
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload toolchain checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-ndk-r29-checksum
+          path: android-ndk-r29-arm64-toolchain.tar.zst.sha256
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
