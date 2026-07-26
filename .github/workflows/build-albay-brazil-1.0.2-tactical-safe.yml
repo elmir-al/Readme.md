@@ -34,9 +34,10 @@ jobs:
           patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
 
           OLD=658bbd987668156627e473fd302711de62f16347
-          git fetch --no-tags --depth=1 origin "$OLD"
           for n in 00 01 02 03 04 05 06 07; do
-            git show "$OLD:ci_source/brazil101-part-$n.b64" > "/tmp/brazil101-part-$n.b64"
+            curl --fail --location --retry 3 \
+              "https://raw.githubusercontent.com/elmir-al/Readme.md/$OLD/ci_source/brazil101-part-$n.b64" \
+              -o "/tmp/brazil101-part-$n.b64"
           done
           cat /tmp/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
           echo "f27fb87e3571826f41e9480d4c21cb7d864536caf7771c214a539a86bc08e9b8  /tmp/brazil101.patch" | sha256sum -c --strict
