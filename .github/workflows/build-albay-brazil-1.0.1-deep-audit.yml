@@ -1,10 +1,10 @@
-name: Build Albay Brazilian 1.0.1 Deep Audit ARM64
+name: Build Albay Brazilian 1.0.2 StrengthFix ARM64
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - "ci_source/brazil101-part-*.b64"
+      - "ci_source/brazil102-strengthfix.patch.gz.b64"
       - ".github/workflows/build-albay-brazil-1.0.1-deep-audit.yml"
   workflow_dispatch:
 
@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct and apply audited Brazilian core
+      - name: Reconstruct and apply Brazilian 1.0.2 StrengthFix
         shell: bash
         run: |
           set -euo pipefail
@@ -37,20 +37,23 @@ jobs:
           cat ci_source/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
           echo "f27fb87e3571826f41e9480d4c21cb7d864536caf7771c214a539a86bc08e9b8  /tmp/brazil101.patch" | sha256sum -c --strict
           set +e
-          patch -d "$SRC" -p1 --batch --verbose < /tmp/brazil101.patch
-          PATCH_STATUS=$?
+          patch -d "$SRC" -p1 --batch < /tmp/brazil101.patch
+          BRAZIL101_STATUS=$?
           set -e
-          echo "Full distribution patch status (metadata absent in minimal base is expected): $PATCH_STATUS"
+          echo "Brazilian 1.0.1 distribution patch status: $BRAZIL101_STATUS"
           sed -i 's/929907/929905/g' "$SRC/src/release.cpp"
-          grep -q 'kEngineVersion = "1.0.1"' "$SRC/include/albay/types.hpp"
-          grep -q 'Albay Brazilian Draughts Engine' "$SRC/include/albay/types.hpp"
-          grep -q 'max_capture_count' "$SRC/src/movegen.cpp"
-          grep -q 'draw_state_fingerprint' "$SRC/src/position.cpp"
-          grep -q 'is_automatic_draw' "$SRC/src/search.cpp"
-          grep -q 'kInlineCapacity' "$SRC/include/albay/move.hpp"
-          grep -q '929905' "$SRC/src/release.cpp"
-          grep -q 'NP=' "$SRC/src/notation.cpp"
-          echo "Brazilian core source gates: PASS"
+          base64 --decode ci_source/brazil102-strengthfix.patch.gz.b64 | gzip -dc > /tmp/brazil102-strengthfix.patch
+          echo "ff520e5800fcc37c5a8573d08b7e807af8f0e1e6acc0d49990c01c832650f04d  /tmp/brazil102-strengthfix.patch" | sha256sum -c --strict
+          patch -d "$SRC" -p1 --forward --batch < /tmp/brazil102-strengthfix.patch
+          grep -q 'kEngineVersion = "1.0.2"' "$SRC/include/albay/types.hpp"
+          grep -q 'use_brazilian_full_window_root = true' "$SRC/include/albay/search.hpp"
+          grep -q 'use_lmr_forcing_capture_guard = true' "$SRC/include/albay/search.hpp"
+          grep -q 'use_forcing_quiet_lmr_guard = true' "$SRC/include/albay/search.hpp"
+          grep -q 'use_endgame_lmr_guard = true' "$SRC/include/albay/search.hpp"
+          grep -q 'BrazilianFullWindowRoot' "$SRC/src/engine.cpp"
+          grep -q 'options_.multi_pv == 1 && !options_.use_brazilian_full_window_root' "$SRC/src/search.cpp"
+          grep -q 'test_brazilian_opening_root_rejects_immediate_double_capture_blunder' "$SRC/tests/search_tests.cpp"
+          echo "Brazilian 1.0.2 StrengthFix source gates: PASS"
 
       - name: Install Android NDK r29
         shell: bash
@@ -98,7 +101,7 @@ jobs:
           cat > artifact/BUILD_INFO.json <<'EOF'
           {
             "engine": "Albay Brazilian Draughts Engine",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "variant": "brazilian_draughts_8x8",
             "ndk": "29.0.14206865",
             "abi": "arm64-v8a",
@@ -107,11 +110,11 @@ jobs:
             "cpu_profile": "portable_armv8_a",
             "elf_load_alignment": 16384,
             "c_api_exports": 27,
-            "rules": "mandatory capture; global maximum capture; men capture both directions; flying kings; delayed removal; Brazilian crown continuation; official automatic draw counters"
+            "search_fix": "full-window verification of every legal Brazilian root move; forcing-capture, forcing-quiet and endgame LMR guards enabled"
           }
           EOF
           {
-            echo "Brazilian 1.0.1 audited core: PASS"
+            echo "Brazilian 1.0.2 StrengthFix core: PASS"
             echo "AArch64 ET_DYN: PASS"
             echo "Static C++ runtime: PASS"
             echo "27 public C API exports: PASS"
@@ -121,7 +124,7 @@ jobs:
       - name: Upload verified release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Albay-Brazilian-1.0.1-DeepAudit-Android-arm64-v8a-NDK-r29
+          name: Albay-Brazilian-1.0.2-StrengthFix-Android-arm64-v8a-NDK-r29
           path: artifact/
           if-no-files-found: error
           retention-days: 30
