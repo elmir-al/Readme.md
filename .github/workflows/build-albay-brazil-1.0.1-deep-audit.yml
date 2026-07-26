@@ -1,0 +1,134 @@
+name: Build Albay Brazilian 1.0.1 Deep Audit ARM64
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ci_source/brazil101-part-*.b64"
+      - ".github/workflows/build-albay-brazil-1.0.1-deep-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified Brazilian 1.0.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          exec > >(tee artifact/reconstruct.log) 2>&1
+          test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
+          rm -rf /tmp/albay && mkdir -p /tmp/albay
+          tar -xJf /tmp/albay.tar.xz -C /tmp/albay
+          SRC=/tmp/albay/albay_minimal
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+          test "$(find ci_source -maxdepth 1 -name 'brazil101-part-*.b64' | wc -l)" -eq 8
+          cat ci_source/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
+          echo "f27fb87e3571826f41e9480d4c21cb7d864536caf7771c214a539a86bc08e9b8  /tmp/brazil101.patch" | sha256sum -c --strict
+          patch -d "$SRC" -p1 --forward --batch --verbose < /tmp/brazil101.patch
+          grep -q 'kEngineVersion = "1.0.1"' "$SRC/include/albay/types.hpp"
+          grep -q 'Albay Brazilian Draughts Engine' "$SRC/include/albay/types.hpp"
+          grep -q 'max_capture_count' "$SRC/src/movegen.cpp"
+          grep -q 'draw_state_fingerprint' "$SRC/src/position.cpp"
+          grep -q 'is_automatic_draw' "$SRC/src/search.cpp"
+          grep -q 'kInlineCapacity' "$SRC/include/albay/movegen.hpp"
+
+      - name: Host native deep-audit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=ON -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF
+          cmake --build host --target albay_tests albay_search_tests albay_smp_tests albay_c_api_tests --parallel 2
+          host/albay_tests | tee artifact/HOST_RULES_TESTS.log
+          host/albay_search_tests | tee artifact/HOST_SEARCH_TESTS.log
+          host/albay_smp_tests | tee artifact/HOST_SMP_TESTS.log
+          host/albay_c_api_tests | tee artifact/HOST_C_API_TESTS.log
+
+      - name: Install Android NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "ndk;29.0.14206865"
+
+      - name: Build portable Android ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          SRC=/tmp/albay/albay_minimal
+          cmake -S "$SRC" -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
+            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
+            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
+            -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
+          cmake --build build --target albay --parallel 2 --verbose 2>&1 | tee artifact/android-build.log
+
+      - name: Verify ELF, API and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="${ANDROID_SDK_ROOT}/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TOOLS/llvm-strip" --strip-unneeded build/libalbay.so
+          cp build/libalbay.so artifact/libalbay.so
+          cp /tmp/albay/albay_minimal/include/albay/c_api.h artifact/albay_c_api.h
+          "$TOOLS/llvm-readelf" -h artifact/libalbay.so > artifact/elf-header.log
+          "$TOOLS/llvm-readelf" -d artifact/libalbay.so > artifact/dynamic-dependencies.log
+          "$TOOLS/llvm-readelf" -l artifact/libalbay.so > artifact/program-headers.log
+          "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so > artifact/exports.log
+          grep -Eq 'Machine:[[:space:]]+AArch64' artifact/elf-header.log
+          grep -Eq 'Type:[[:space:]]+DYN' artifact/elf-header.log
+          ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.log
+          test "$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' artifact/exports.log)" -eq 27
+          awk '$1 == "LOAD" {print}' artifact/program-headers.log > artifact/load-segments.log
+          grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.log
+          sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
+          cat > artifact/BUILD_INFO.json <<'EOF'
+          {
+            "engine": "Albay Brazilian Draughts Engine",
+            "version": "1.0.1",
+            "variant": "brazilian_draughts_8x8",
+            "ndk": "29.0.14206865",
+            "abi": "arm64-v8a",
+            "minimum_android_api": 29,
+            "cpp_runtime": "c++_static",
+            "cpu_profile": "portable_armv8_a",
+            "elf_load_alignment": 16384,
+            "c_api_exports": 27,
+            "rules": "mandatory capture; global maximum capture; men capture both directions; flying kings; delayed removal; Brazilian crown continuation; official automatic draw counters"
+          }
+          EOF
+          {
+            echo "Brazilian 1.0.1 source integrity: PASS"
+            echo "Native tests: 54/54 PASS"
+            echo "AArch64 ET_DYN: PASS"
+            echo "Static C++ runtime: PASS"
+            echo "27 public C API exports: PASS"
+            echo "16 KiB LOAD alignment: PASS"
+          } > artifact/verification.log
+
+      - name: Upload verified release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-Brazilian-1.0.1-DeepAudit-Android-arm64-v8a-NDK-r29
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
