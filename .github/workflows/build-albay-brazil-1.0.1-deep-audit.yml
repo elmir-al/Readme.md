@@ -23,35 +23,40 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifact
-          exec > >(tee artifact/reconstruct.log) 2>&1
           test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
           cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
           echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
           rm -rf /tmp/albay && mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           SRC=/tmp/albay/albay_minimal
-          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch
-          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch
+          patch -d "$SRC" -p1 --forward --batch < ci_source/android_ndk_shared_ptr.patch > /tmp/base1.log
+          patch -d "$SRC" -p1 --forward --batch < ci_source/evaluation_scale_compat.patch > /tmp/base2.log
+          patch -d "$SRC" -p1 --forward --batch < ci_source/russian_king_forced_continuation_1042.patch > /tmp/base3.log
           test "$(find ci_source -maxdepth 1 -name 'brazil101-part-*.b64' | wc -l)" -eq 8
           cat ci_source/brazil101-part-*.b64 | base64 --decode | gzip -dc > /tmp/brazil101.patch
           echo "f27fb87e3571826f41e9480d4c21cb7d864536caf7771c214a539a86bc08e9b8  /tmp/brazil101.patch" | sha256sum -c --strict
           set +e
-          patch -d "$SRC" -p1 --batch < /tmp/brazil101.patch
+          patch -d "$SRC" -p1 --batch < /tmp/brazil101.patch > /tmp/brazil101.log 2>&1
           BRAZIL101_STATUS=$?
           set -e
           echo "Brazilian 1.0.1 distribution patch status: $BRAZIL101_STATUS"
+          tail -n 12 /tmp/brazil101.log || true
           sed -i 's/929907/929905/g' "$SRC/src/release.cpp"
           base64 --decode ci_source/brazil102-strengthfix.patch.gz.b64 | gzip -dc > /tmp/brazil102-strengthfix.patch
           echo "ff520e5800fcc37c5a8573d08b7e807af8f0e1e6acc0d49990c01c832650f04d  /tmp/brazil102-strengthfix.patch" | sha256sum -c --strict
-          patch -d "$SRC" -p1 --forward --batch < /tmp/brazil102-strengthfix.patch
+          if ! patch -d "$SRC" -p1 --forward --batch < /tmp/brazil102-strengthfix.patch > /tmp/brazil102.log 2>&1; then
+            echo "Brazilian 1.0.2 patch failed:"
+            cat /tmp/brazil102.log
+            exit 1
+          fi
+          cat /tmp/brazil102.log
           grep -q 'kEngineVersion = "1.0.2"' "$SRC/include/albay/types.hpp"
           grep -q 'use_brazilian_full_window_root = true' "$SRC/include/albay/search.hpp"
           grep -q 'use_lmr_forcing_capture_guard = true' "$SRC/include/albay/search.hpp"
           grep -q 'use_forcing_quiet_lmr_guard = true' "$SRC/include/albay/search.hpp"
           grep -q 'use_endgame_lmr_guard = true' "$SRC/include/albay/search.hpp"
           grep -q 'BrazilianFullWindowRoot' "$SRC/src/engine.cpp"
-          grep -q 'options_.multi_pv == 1 && !options_.use_brazilian_full_window_root' "$SRC/src/search.cpp"
+          grep -Fq 'options_.multi_pv == 1 && !options_.use_brazilian_full_window_root' "$SRC/src/search.cpp"
           grep -q 'test_brazilian_opening_root_rejects_immediate_double_capture_blunder' "$SRC/tests/search_tests.cpp"
           echo "Brazilian 1.0.2 StrengthFix source gates: PASS"
 
