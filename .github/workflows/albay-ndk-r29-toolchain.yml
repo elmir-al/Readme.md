@@ -1,0 +1,60 @@
+name: Albay NDK r29 Toolchain
+
+on:
+  push:
+    branches:
+      - agent/albay-ndk-r29-toolchain
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Download and verify Android NDK r29
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o android-ndk-r29-linux.zip \
+            https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          echo "87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b  android-ndk-r29-linux.zip" | sha1sum -c -
+          unzip -q android-ndk-r29-linux.zip
+          grep -q 'Pkg.Revision = 29.0.14206865' android-ndk-r29/source.properties
+
+      - name: Keep only Linux ARM64 build toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          NDK="$PWD/android-ndk-r29"
+          SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          rm -rf \
+            "$NDK/docs" \
+            "$NDK/samples" \
+            "$NDK/simpleperf" \
+            "$NDK/prebuilt"
+          find "$SYSROOT/usr/lib" -mindepth 1 -maxdepth 1 -type d \
+            ! -name aarch64-linux-android -exec rm -rf {} +
+          find "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin" -maxdepth 1 -type l \
+            \( -name 'armv7a-*' -o -name 'i686-*' -o -name 'x86_64-*' -o -name 'riscv64-*' \) \
+            -delete
+          tar -I 'zstd -19 -T0' -cf android-ndk-r29-arm64-toolchain.tar.zst android-ndk-r29
+          sha256sum android-ndk-r29-arm64-toolchain.tar.zst > android-ndk-r29-arm64-toolchain.tar.zst.sha256
+          ls -lh android-ndk-r29-arm64-toolchain.tar.zst*
+
+      - name: Upload toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-android-ndk-r29-arm64-toolchain
+          path: |
+            android-ndk-r29-arm64-toolchain.tar.zst
+            android-ndk-r29-arm64-toolchain.tar.zst.sha256
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
