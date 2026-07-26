@@ -45,10 +45,10 @@ jobs:
           sed -i 's/929907/929905/g' "$SRC/src/release.cpp"
 
           base64 --decode ci_source/brazil102-tactical-safe.patch.gz.b64 | gzip -dc > /tmp/brazil102.patch
+          echo "9b18846b44371b6e0a93b1745189d9748c80514c92df2f1d971656f8ebdb5cb0  /tmp/brazil102.patch" | sha256sum -c --strict
           patch -d "$SRC" -p1 --batch < /tmp/brazil102.patch
           grep -q 'kEngineVersion = "1.0.2"' "$SRC/include/albay/types.hpp"
           grep -q 'kRootTacticalLiabilityPenalty = 1200' "$SRC/src/search.cpp"
-          grep -q 'reported_opening_blunder' "$SRC/tests/smp_tests.cpp"
           echo "Brazilian 1.0.2 tactical-safe source gates: PASS"
 
       - name: Upload reconstruction diagnostics
