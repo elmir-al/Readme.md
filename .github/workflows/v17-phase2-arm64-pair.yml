@@ -23,24 +23,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify source part count
+      - name: Verify source parts
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find ci_source_v17 -maxdepth 1 -name 'part-[0-9][0-9].b64' | wc -l)" -eq 13
+          required=(
+            part-00.b64 part-01.b64 part-02.b64 part-03.b64 part-04.b64
+            part-05.b64 part-06.b64 part-07.b64 part-08.b64 part-09.b64
+            part-10a.b64 part-10b1.b64 part-10b2.b64 part-10b3.b64
+            part-10b4.b64 part-10b5.b64 part-11.b64 part-12.b64
+          )
+          for part in "${required[@]}"; do
+            test -s "ci_source_v17/${part}"
+          done
 
       - name: Reconstruct source archive
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/albay-v17
-          cat ci_source_v17/part-[0-9][0-9].b64 | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
+          cat \
+            ci_source_v17/part-00.b64 \
+            ci_source_v17/part-01.b64 \
+            ci_source_v17/part-02.b64 \
+            ci_source_v17/part-03.b64 \
+            ci_source_v17/part-04.b64 \
+            ci_source_v17/part-05.b64 \
+            ci_source_v17/part-06.b64 \
+            ci_source_v17/part-07.b64 \
+            ci_source_v17/part-08.b64 \
+            ci_source_v17/part-09.b64 \
+            ci_source_v17/part-10a.b64 \
+            ci_source_v17/part-10b1.b64 \
+            ci_source_v17/part-10b2.b64 \
+            ci_source_v17/part-10b3.b64 \
+            ci_source_v17/part-10b4.b64 \
+            ci_source_v17/part-10b5.b64 \
+            ci_source_v17/part-11.b64 \
+            ci_source_v17/part-12.b64 \
+            | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
 
-      - name: Record reconstructed source SHA256
+      - name: Verify reconstructed source SHA256
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum /tmp/v17_phase2_ci_minimal.tar.xz
+          echo "535f88c9859128d9c55ba43d5d59515c5bd4a5a3a0a672f6dafc129b79488d23  /tmp/v17_phase2_ci_minimal.tar.xz" | sha256sum -c --strict
           xz --test /tmp/v17_phase2_ci_minimal.tar.xz
 
       - name: Extract source archive
