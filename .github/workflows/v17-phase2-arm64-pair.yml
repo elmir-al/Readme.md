@@ -1,0 +1,187 @@
+name: Albay V17 Phase 2 ARM64 Pair
+
+on:
+  push:
+    branches: ["agent/v17-phase2-arm64-pair"]
+    paths:
+      - "ci_source_v17/**"
+      - ".github/workflows/v17-phase2-arm64-pair.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "ci_source_v17/**"
+      - ".github/workflows/v17-phase2-arm64-pair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-v16-v17-pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify source parts
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            part-00.b64 part-01.b64 part-02.b64 part-03.b64 part-04.b64
+            part-05.b64 part-06.b64 part-07.b64 part-08.b64 part-09.b64
+            part-10-01.b64 part-10-02.b64 part-10-03.b64 part-10-04.b64 part-10-05.b64
+            part-10-06.b64 part-10-07.b64 part-10-08.b64 part-10-09.b64 part-10-10.b64
+            part-11.b64 part-12.b64
+          )
+          for part in "${required[@]}"; do
+            test -s "ci_source_v17/${part}"
+          done
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/albay-v17
+          cat \
+            ci_source_v17/part-00.b64 \
+            ci_source_v17/part-01.b64 \
+            ci_source_v17/part-02.b64 \
+            ci_source_v17/part-03.b64 \
+            ci_source_v17/part-04.b64 \
+            ci_source_v17/part-05.b64 \
+            ci_source_v17/part-06.b64 \
+            ci_source_v17/part-07.b64 \
+            ci_source_v17/part-08.b64 \
+            ci_source_v17/part-09.b64 \
+            ci_source_v17/part-10-01.b64 \
+            ci_source_v17/part-10-02.b64 \
+            ci_source_v17/part-10-03.b64 \
+            ci_source_v17/part-10-04.b64 \
+            ci_source_v17/part-10-05.b64 \
+            ci_source_v17/part-10-06.b64 \
+            ci_source_v17/part-10-07.b64 \
+            ci_source_v17/part-10-08.b64 \
+            ci_source_v17/part-10-09.b64 \
+            ci_source_v17/part-10-10.b64 \
+            ci_source_v17/part-11.b64 \
+            ci_source_v17/part-12.b64 \
+            | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
+          echo "535f88c9859128d9c55ba43d5d59515c5bd4a5a3a0a672f6dafc129b79488d23  /tmp/v17_phase2_ci_minimal.tar.xz" | sha256sum -c --strict
+          xz --test /tmp/v17_phase2_ci_minimal.tar.xz
+          tar -xJf /tmp/v17_phase2_ci_minimal.tar.xz -C /tmp/albay-v17
+
+      - name: Verify V16 and V17 source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          test -f "$SRC/CMakeLists.txt"
+          test -f "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
+          grep -Fq 'alignas(Move) std::array<std::byte, sizeof(Move) * kInlineCapacity> inline_storage_;' "$SRC/include/albay/move.hpp"
+          grep -Fq '::new (static_cast<void*>(inline_data() + size_)) Move' "$SRC/include/albay/move.hpp"
+          grep -Fq 'std::array<Move, kInlineCapacity> inline_{};' "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
+          ! grep -Fq 'inline_storage_' "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
+
+      - name: Host build and rule smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          cmake -S "$SRC" -B /tmp/albay-v17/host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF \
+            -DALBAY_BUILD_TOOLS=OFF \
+            -DALBAY_BUILD_JNI=OFF
+          cmake --build /tmp/albay-v17/host --target albay --parallel 2
+          python3 - <<'PY'
+          import ctypes
+          from pathlib import Path
+          lib = ctypes.CDLL(str(Path('/tmp/albay-v17/host/libalbay.so')))
+          lib.albay_engine_create.restype = ctypes.c_void_p
+          lib.albay_engine_destroy.argtypes = [ctypes.c_void_p]
+          lib.albay_engine_set_position.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+          lib.albay_engine_set_position.restype = ctypes.c_int
+          lib.albay_engine_generate_legal_moves.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+          lib.albay_engine_generate_legal_moves.restype = ctypes.c_int
+          engine = lib.albay_engine_create()
+          assert engine
+          try:
+              assert lib.albay_engine_set_position(engine, b'W:WKa1,e3:Ba3,c3,g5;NP=0') == 0
+              needed = ctypes.c_size_t()
+              buffer = ctypes.create_string_buffer(4096)
+              assert lib.albay_engine_generate_legal_moves(engine, buffer, len(buffer), ctypes.byref(needed)) == 0
+              assert buffer.value.decode() == 'a1xf6xh4', buffer.value
+          finally:
+              lib.albay_engine_destroy(engine)
+          PY
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install pinned NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;29.0.14206865" "cmake;3.22.1"
+          grep -q 'Pkg.Revision = 29.0.14206865' "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
+
+      - name: Build identical-toolchain ARM64 pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          export ANDROID_API_LEVEL=29
+          export CPU_PROFILE=portable
+          export BUILD_JOBS=2
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          chmod +x "$SRC/android/scripts/"*.sh
+          "$SRC/android/scripts/build_v17_phase2_arm64_pair.sh"
+
+      - name: Package and verify evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          ART="$SRC/build/v17-phase2-arm64-pair/artifacts"
+          test -s "$ART/libalbay_v16_baseline.so"
+          test -s "$ART/libalbay_v17_phase2.so"
+          test -s "$ART/V17_PHASE2_ARM64_PAIR_MANIFEST.json"
+          test -s "$ART/V17_PHASE2_ARM64_PAIR_SHA256.txt"
+          cp /tmp/v17_phase2_ci_minimal.tar.xz "$ART/"
+          cat > "$ART/BUILD_CONTEXT.txt" <<'EOF'
+          Albay: 1.0.45 V17 Movegen Hot-Path Phase 2
+          NDK: 29.0.14206865
+          ABI: arm64-v8a
+          Android API: 29
+          STL: c++_static
+          CPU profile: portable ARMv8-A
+          ThinLTO: OFF
+          PGO: OFF
+          Device speed claim: none until Samsung Galaxy S25 physical A/B test
+          EOF
+
+      - name: Publish ARM64 pair to branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          ART="$SRC/build/v17-phase2-arm64-pair/artifacts"
+          rm -rf ci_artifacts_v17
+          mkdir -p ci_artifacts_v17
+          cp -a "$ART"/. ci_artifacts_v17/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci_artifacts_v17
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish V17 Phase 2 ARM64 pair artifacts"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Albay-V17-Phase2-ARM64-Pair
+          if-no-files-found: error
+          retention-days: 30
+          path: /tmp/albay-v17/v17_phase2_ci_minimal/build/v17-phase2-arm64-pair/artifacts/
