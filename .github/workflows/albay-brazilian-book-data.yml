@@ -1,0 +1,56 @@
+name: Albay Brazilian Opening Data
+
+on:
+  push:
+    branches:
+      - agent/albay-brazilian-book-data
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-data:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Download public Brazilian opening sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p data
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o data/pydraughts_brazilian_ballots.json \
+            https://raw.githubusercontent.com/AttackingOrDefending/pydraughts/main/draughts/ballot_files/brazilian.json
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o data/pydraughts_150_basic.json \
+            https://raw.githubusercontent.com/AttackingOrDefending/pydraughts/main/draughts/ballot_files/150russian_and_brazilian.json
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o data/IDF_Brazilian_772_2024.pdf \
+            https://idf64.org/wp-content/uploads/2024/01/IDF-Draw-772-positions-Brazilian-draughts-01.01.2024.pdf
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o data/lidraughts_brazilian_marathon_2026.pdn \
+            https://lidraughts.org/api/tournament/0LvPwIWy/games
+          curl -L --fail --retry 5 --retry-all-errors \
+            -o data/lidraughts_brazilian_opening_study.pdn \
+            https://lidraughts.org/api/study/EIVFmLf5.pdn || true
+          sha256sum data/* > data/SHA256SUMS.txt
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path('data/pydraughts_brazilian_ballots.json')
+          d=json.loads(p.read_text())
+          print('Brazilian ballots:', len(d.get('all',{})), 'standard:', len(d.get('standard',[])), 'lost:', len(d.get('lost',[])))
+          p=pathlib.Path('data/pydraughts_150_basic.json')
+          d=json.loads(p.read_text())
+          print('Basic ballots:', len(d.get('all',{})), 'standard:', len(d.get('standard',[])), 'lost:', len(d.get('lost',[])))
+          PY
+          ls -lh data
+
+      - name: Upload public data
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-brazilian-opening-public-data
+          path: data
+          compression-level: 6
+          retention-days: 1
+          if-no-files-found: error
