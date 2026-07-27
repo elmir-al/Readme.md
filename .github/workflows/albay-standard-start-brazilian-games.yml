@@ -15,7 +15,7 @@ permissions:
 jobs:
   fetch-and-filter:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Download public games from strong Brazilian players
         shell: bash
@@ -51,13 +51,13 @@ jobs:
           EOF
           download_user() {
             user="$1"
-            curl -L --fail --retry 5 --retry-all-errors \
+            curl -L --fail --retry 2 --retry-all-errors --connect-timeout 10 --max-time 90 \
               -H 'Accept: application/x-chess-pgn' \
               -o "raw/${user}.pdn" \
-              "https://lidraughts.org/api/games/user/${user}?max=500&clocks=false&evals=false&opening=false" || true
+              "https://lidraughts.org/api/games/user/${user}?max=200&clocks=false&evals=false&opening=false" || true
           }
           export -f download_user
-          xargs -n1 -P5 bash -c 'download_user "$1"' _ < users.txt
+          xargs -n1 -P8 bash -c 'download_user "$1"' _ < users.txt
 
       - name: Keep only Brazilian games from the normal initial array
         shell: bash
