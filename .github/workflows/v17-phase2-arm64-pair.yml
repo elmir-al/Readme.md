@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-v16-v17-pair:
@@ -30,8 +30,7 @@ jobs:
           required=(
             part-00.b64 part-01.b64 part-02.b64 part-03.b64 part-04.b64
             part-05.b64 part-06.b64 part-07.b64 part-08.b64 part-09.b64
-            part-10a.b64 part-10b1.b64 part-10b2.b64 part-10b3.b64
-            part-10b4.b64 part-10b5.b64 part-11.b64 part-12.b64
+            part-10-01.b64 part-11.b64 part-12.b64
           )
           for part in "${required[@]}"; do
             test -s "ci_source_v17/${part}"
@@ -53,12 +52,7 @@ jobs:
             ci_source_v17/part-07.b64 \
             ci_source_v17/part-08.b64 \
             ci_source_v17/part-09.b64 \
-            ci_source_v17/part-10a.b64 \
-            ci_source_v17/part-10b1.b64 \
-            ci_source_v17/part-10b2.b64 \
-            ci_source_v17/part-10b3.b64 \
-            ci_source_v17/part-10b4.b64 \
-            ci_source_v17/part-10b5.b64 \
+            ci_source_v17/part-10-01.b64 \
             ci_source_v17/part-11.b64 \
             ci_source_v17/part-12.b64 \
             | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
@@ -178,6 +172,26 @@ jobs:
           Purpose: identical-toolchain V16 baseline versus V17 candidate A/B pair
           Device speed claim: none until Samsung Galaxy S25 physical A/B test
           EOF
+
+      - name: Publish ARM64 pair to branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          ART="$SRC/build/v17-phase2-arm64-pair/artifacts"
+          rm -rf ci_artifacts_v17
+          mkdir -p ci_artifacts_v17
+          cp -a "$ART"/. ci_artifacts_v17/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci_artifacts_v17
+          if git diff --cached --quiet; then
+            echo "ARM64 pair artifacts already current"
+          else
+            git commit -m "Publish V17 Phase 2 ARM64 pair artifacts"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
