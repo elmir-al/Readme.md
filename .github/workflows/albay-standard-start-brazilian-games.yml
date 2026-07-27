@@ -1,0 +1,116 @@
+name: Albay Standard-Start Brazilian Games
+
+on:
+  push:
+    branches:
+      - agent/albay-brazilian-book-data
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-and-filter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Download public games from strong Brazilian players
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p raw filtered
+          users=(
+            wiilk viniciusdamir NOTGNIHSAW AleksanderAlekhine Batomesmo
+            blacksssss Arzubeq octophus Nyava MARCELENKO Assoprei NatusVincere
+            Filemon ARKNET orlando58PE Valmar1977 fk93 Hela Nick777 conan
+            yurash48 Renasm TUVICI laka007 simple1
+          )
+          for user in "${users[@]}"; do
+            curl -L --fail --retry 5 --retry-all-errors \
+              -H 'Accept: application/x-chess-pgn' \
+              -o "raw/${user}.pdn" \
+              "https://lidraughts.org/api/games/user/${user}?max=1500&clocks=false&evals=false&opening=false" || true
+            sleep 1
+          done
+
+      - name: Keep only Brazilian games from the normal initial array
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import json, pathlib, re
+
+          root = pathlib.Path('raw')
+          out = pathlib.Path('filtered/standard_start_brazilian_top_players.pdn')
+          canonical_w = {'a1','c1','e1','g1','b2','d2','f2','h2','a3','c3','e3','g3'}
+          canonical_b = {'b6','d6','f6','h6','a7','c7','e7','g7','b8','d8','f8','h8'}
+
+          def tags(chunk):
+              return {m.group(1): m.group(2) for m in re.finditer(r'^\[([^ ]+)\s+"([^"]*)"\]$', chunk, re.M)}
+
+          def is_start_fen(fen):
+              if not fen:
+                  return True
+              m = re.fullmatch(r'\s*W:W([^:]*):B([^:]*)\s*', fen, re.I)
+              if not m:
+                  return False
+              def parse(raw):
+                  parts = {x.strip().lower() for x in raw.split(',') if x.strip()}
+                  if any(x.startswith('k') for x in parts):
+                      return None
+                  return parts
+              return parse(m.group(1)) == canonical_w and parse(m.group(2)) == canonical_b
+
+          kept = []
+          per_user = {}
+          rejected = {'not_brazilian':0,'nonstandard_start':0,'empty':0}
+          seen_sites = set()
+          for path in sorted(root.glob('*.pdn')):
+              text = path.read_text(encoding='utf-8', errors='replace')
+              chunks = [c.strip() for c in re.split(r'(?=^\[Event\s+")', text, flags=re.M) if '[Event ' in c]
+              count = 0
+              for chunk in chunks:
+                  t = tags(chunk)
+                  if t.get('GameType') != '26':
+                      rejected['not_brazilian'] += 1
+                      continue
+                  if not is_start_fen(t.get('FEN','')):
+                      rejected['nonstandard_start'] += 1
+                      continue
+                  movetext = re.split(r'\n\s*\n', chunk, maxsplit=1)
+                  if len(movetext) != 2 or not re.search(r'[a-h][1-8][-x:][a-h][1-8]', movetext[1], re.I):
+                      rejected['empty'] += 1
+                      continue
+                  site = t.get('Site','')
+                  if site and site in seen_sites:
+                      continue
+                  seen_sites.add(site)
+                  kept.append(chunk.rstrip() + '\n')
+                  count += 1
+              per_user[path.stem] = count
+          out.write_text('\n\n'.join(kept) + ('\n' if kept else ''), encoding='utf-8')
+          meta = {
+              'source':'public Lidraughts user game exports',
+              'selection':'GameType 26 and exact normal 12-vs-12 initial array only',
+              'drawing_tables_used':False,
+              'random_positions_used':False,
+              'games_kept':len(kept),
+              'per_user':per_user,
+              'rejected':rejected,
+          }
+          pathlib.Path('filtered/standard_start_metadata.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+          print(json.dumps(meta, indent=2))
+          if not kept:
+              raise SystemExit('No standard-start Brazilian games found')
+          PY
+          sha256sum filtered/* > filtered/SHA256SUMS.txt
+          ls -lh filtered
+
+      - name: Upload standard-start game corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: albay-standard-start-brazilian-games
+          path: filtered
+          compression-level: 6
+          retention-days: 1
+          if-no-files-found: error
