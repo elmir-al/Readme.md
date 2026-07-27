@@ -15,26 +15,50 @@ permissions:
 jobs:
   fetch-and-filter:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Download public games from strong Brazilian players
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p raw filtered
-          users=(
-            wiilk viniciusdamir NOTGNIHSAW AleksanderAlekhine Batomesmo
-            blacksssss Arzubeq octophus Nyava MARCELENKO Assoprei NatusVincere
-            Filemon ARKNET orlando58PE Valmar1977 fk93 Hela Nick777 conan
-            yurash48 Renasm TUVICI laka007 simple1
-          )
-          for user in "${users[@]}"; do
+          cat > users.txt <<'EOF'
+          wiilk
+          viniciusdamir
+          NOTGNIHSAW
+          AleksanderAlekhine
+          Batomesmo
+          blacksssss
+          Arzubeq
+          octophus
+          Nyava
+          MARCELENKO
+          Assoprei
+          NatusVincere
+          Filemon
+          ARKNET
+          orlando58PE
+          Valmar1977
+          fk93
+          Hela
+          Nick777
+          conan
+          yurash48
+          Renasm
+          TUVICI
+          laka007
+          simple1
+          EOF
+          export -f download_user
+          download_user() {
+            user="$1"
             curl -L --fail --retry 5 --retry-all-errors \
               -H 'Accept: application/x-chess-pgn' \
               -o "raw/${user}.pdn" \
-              "https://lidraughts.org/api/games/user/${user}?max=1500&clocks=false&evals=false&opening=false" || true
-            sleep 1
-          done
+              "https://lidraughts.org/api/games/user/${user}?max=500&clocks=false&evals=false&opening=false" || true
+          }
+          export -f download_user
+          xargs -n1 -P5 bash -c 'download_user "$1"' _ < users.txt
 
       - name: Keep only Brazilian games from the normal initial array
         shell: bash
