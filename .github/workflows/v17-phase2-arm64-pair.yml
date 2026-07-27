@@ -34,8 +34,10 @@ jobs:
           tar -xJf /tmp/v17_phase2_ci_minimal.tar.xz -C /tmp/albay-v17
           test -f /tmp/albay-v17/v17_phase2_ci_minimal/CMakeLists.txt
           test -f /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
-          grep -q 'MoveList() noexcept {}' /tmp/albay-v17/v17_phase2_ci_minimal/include/albay/move.hpp
-          grep -q 'MoveList() noexcept = default' /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
+          grep -Fq 'alignas(Move) std::array<std::byte, sizeof(Move) * kInlineCapacity> inline_storage_;' /tmp/albay-v17/v17_phase2_ci_minimal/include/albay/move.hpp
+          grep -Fq '::new (static_cast<void*>(inline_data() + size_)) Move' /tmp/albay-v17/v17_phase2_ci_minimal/include/albay/move.hpp
+          grep -Fq 'std::array<Move, kInlineCapacity> inline_{};' /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
+          ! grep -Fq 'inline_storage_' /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
 
       - name: Host build and rule smoke
         shell: bash
