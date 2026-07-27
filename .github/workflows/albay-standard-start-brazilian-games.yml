@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/albay-brazilian-book-data
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
