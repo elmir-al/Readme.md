@@ -30,7 +30,9 @@ jobs:
           required=(
             part-00.b64 part-01.b64 part-02.b64 part-03.b64 part-04.b64
             part-05.b64 part-06.b64 part-07.b64 part-08.b64 part-09.b64
-            part-10-01.b64 part-11.b64 part-12.b64
+            part-10-01.b64 part-10-02.b64 part-10-03.b64 part-10-04.b64 part-10-05.b64
+            part-10-06.b64 part-10-07.b64 part-10-08.b64 part-10-09.b64 part-10-10.b64
+            part-11.b64 part-12.b64
           )
           for part in "${required[@]}"; do
             test -s "ci_source_v17/${part}"
@@ -53,33 +55,33 @@ jobs:
             ci_source_v17/part-08.b64 \
             ci_source_v17/part-09.b64 \
             ci_source_v17/part-10-01.b64 \
+            ci_source_v17/part-10-02.b64 \
+            ci_source_v17/part-10-03.b64 \
+            ci_source_v17/part-10-04.b64 \
+            ci_source_v17/part-10-05.b64 \
+            ci_source_v17/part-10-06.b64 \
+            ci_source_v17/part-10-07.b64 \
+            ci_source_v17/part-10-08.b64 \
+            ci_source_v17/part-10-09.b64 \
+            ci_source_v17/part-10-10.b64 \
             ci_source_v17/part-11.b64 \
             ci_source_v17/part-12.b64 \
             | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
-
-      - name: Verify reconstructed source SHA256
-        shell: bash
-        run: |
-          set -euo pipefail
           echo "535f88c9859128d9c55ba43d5d59515c5bd4a5a3a0a672f6dafc129b79488d23  /tmp/v17_phase2_ci_minimal.tar.xz" | sha256sum -c --strict
           xz --test /tmp/v17_phase2_ci_minimal.tar.xz
-
-      - name: Extract source archive
-        shell: bash
-        run: |
-          set -euo pipefail
           tar -xJf /tmp/v17_phase2_ci_minimal.tar.xz -C /tmp/albay-v17
-          test -f /tmp/albay-v17/v17_phase2_ci_minimal/CMakeLists.txt
-          test -f /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
 
       - name: Verify V16 and V17 source identity
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fq 'alignas(Move) std::array<std::byte, sizeof(Move) * kInlineCapacity> inline_storage_;' /tmp/albay-v17/v17_phase2_ci_minimal/include/albay/move.hpp
-          grep -Fq '::new (static_cast<void*>(inline_data() + size_)) Move' /tmp/albay-v17/v17_phase2_ci_minimal/include/albay/move.hpp
-          grep -Fq 'std::array<Move, kInlineCapacity> inline_{};' /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
-          ! grep -Fq 'inline_storage_' /tmp/albay-v17/v17_phase2_ci_minimal/android/v17_phase2_baseline/include/albay/move.hpp
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          test -f "$SRC/CMakeLists.txt"
+          test -f "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
+          grep -Fq 'alignas(Move) std::array<std::byte, sizeof(Move) * kInlineCapacity> inline_storage_;' "$SRC/include/albay/move.hpp"
+          grep -Fq '::new (static_cast<void*>(inline_data() + size_)) Move' "$SRC/include/albay/move.hpp"
+          grep -Fq 'std::array<Move, kInlineCapacity> inline_{};' "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
+          ! grep -Fq 'inline_storage_' "$SRC/android/v17_phase2_baseline/include/albay/move.hpp"
 
       - name: Host build and rule smoke
         shell: bash
@@ -95,31 +97,20 @@ jobs:
           python3 - <<'PY'
           import ctypes
           from pathlib import Path
-
           lib = ctypes.CDLL(str(Path('/tmp/albay-v17/host/libalbay.so')))
           lib.albay_engine_create.restype = ctypes.c_void_p
           lib.albay_engine_destroy.argtypes = [ctypes.c_void_p]
           lib.albay_engine_set_position.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
           lib.albay_engine_set_position.restype = ctypes.c_int
-          lib.albay_engine_generate_legal_moves.argtypes = [
-              ctypes.c_void_p,
-              ctypes.c_char_p,
-              ctypes.c_size_t,
-              ctypes.POINTER(ctypes.c_size_t),
-          ]
+          lib.albay_engine_generate_legal_moves.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
           lib.albay_engine_generate_legal_moves.restype = ctypes.c_int
-
           engine = lib.albay_engine_create()
           assert engine
           try:
-              assert lib.albay_engine_set_position(
-                  engine, b'W:WKa1,e3:Ba3,c3,g5;NP=0'
-              ) == 0
+              assert lib.albay_engine_set_position(engine, b'W:WKa1,e3:Ba3,c3,g5;NP=0') == 0
               needed = ctypes.c_size_t()
               buffer = ctypes.create_string_buffer(4096)
-              assert lib.albay_engine_generate_legal_moves(
-                  engine, buffer, len(buffer), ctypes.byref(needed)
-              ) == 0
+              assert lib.albay_engine_generate_legal_moves(engine, buffer, len(buffer), ctypes.byref(needed)) == 0
               assert buffer.value.decode() == 'a1xf6xh4', buffer.value
           finally:
               lib.albay_engine_destroy(engine)
@@ -133,9 +124,7 @@ jobs:
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;29.0.14206865" "cmake;3.22.1"
-          test -f "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
-          grep -q 'Pkg.Revision = 29.0.14206865' \
-            "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
+          grep -q 'Pkg.Revision = 29.0.14206865' "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
 
       - name: Build identical-toolchain ARM64 pair
         shell: bash
@@ -149,7 +138,7 @@ jobs:
           chmod +x "$SRC/android/scripts/"*.sh
           "$SRC/android/scripts/build_v17_phase2_arm64_pair.sh"
 
-      - name: Package evidence
+      - name: Package and verify evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -169,7 +158,6 @@ jobs:
           CPU profile: portable ARMv8-A
           ThinLTO: OFF
           PGO: OFF
-          Purpose: identical-toolchain V16 baseline versus V17 candidate A/B pair
           Device speed claim: none until Samsung Galaxy S25 physical A/B test
           EOF
 
@@ -186,9 +174,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ci_artifacts_v17
-          if git diff --cached --quiet; then
-            echo "ARM64 pair artifacts already current"
-          else
+          if ! git diff --cached --quiet; then
             git commit -m "Publish V17 Phase 2 ARM64 pair artifacts"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
