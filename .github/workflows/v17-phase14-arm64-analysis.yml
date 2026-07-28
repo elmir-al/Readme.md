@@ -58,12 +58,14 @@ jobs:
         run: |
           set -euo pipefail
           base64 --decode phase14_overlay/phase14_overlay.tar.xz.b64 > /tmp/phase14_overlay.tar.xz
-          echo "920d84f89c274827f7accd942c0d0a818befd83cf4c391c5b3381d3e93c3a356  /tmp/phase14_overlay.tar.xz" | sha256sum -c --strict
+          echo "6e586f0804de981405b09dad74cb0998a209132ea90fc36967efbaa856919f3d  /tmp/phase14_overlay.tar.xz" | sha256sum -c --strict
           xz --test /tmp/phase14_overlay.tar.xz
           mkdir -p /tmp/phase14-overlay
           tar -xJf /tmp/phase14_overlay.tar.xz -C /tmp/phase14-overlay
           echo "f3790df85a0384ae5fd6f510bdde3bef578beb6a32a89ca70ed6e408de71267f  /tmp/phase14-overlay/phase14_engine.patch" | sha256sum -c --strict
           echo "8ad428798f119cae9d571966955647a8a33cebbaaca25d03fc5b12fdc3c4ee17  /tmp/phase14-overlay/V17_PHASE10_HOLDOUT_400.tsv" | sha256sum -c --strict
+          echo "cd1a9a294d84ce870c2bf11b4e2ff2371b6d8c7e75eb741d6b423d06eafa5507  /tmp/phase14-overlay/v17_phase14_root_verification_tests.cpp" | sha256sum -c --strict
+          echo "110070300e95e8074c2104c856d09e887e281e6b1ffda8cccd536e669d7278ff  /tmp/phase14-overlay/v17_phase14_holdout_gate_tests.cpp" | sha256sum -c --strict
           SRC=/tmp/albay-v17/v17_phase2_ci_minimal
           cd "$SRC"
           git apply --check /tmp/phase14-overlay/phase14_engine.patch
@@ -79,17 +81,21 @@ jobs:
         run: |
           set -euo pipefail
           SRC=/tmp/albay-v17/v17_phase2_ci_minimal
-          cmake -S "$SRC" -B /tmp/albay-v17/host -G Ninja \
+          HOST=/tmp/albay-v17/host
+          cmake -S "$SRC" -B "$HOST" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DALBAY_BUILD_TESTS=ON \
+            -DALBAY_BUILD_TESTS=OFF \
             -DALBAY_BUILD_TOOLS=OFF \
             -DALBAY_BUILD_JNI=OFF
-          cmake --build /tmp/albay-v17/host --parallel 2 --target \
-            albay \
-            albay_v17_phase14_root_verification_tests \
-            albay_v17_phase14_holdout_gate_tests
-          /tmp/albay-v17/host/albay_v17_phase14_root_verification_tests
-          /tmp/albay-v17/host/albay_v17_phase14_holdout_gate_tests \
+          cmake --build "$HOST" --parallel 2 --target albay albay_core
+          c++ -std=c++20 -O3 -DNDEBUG -I"$SRC/include" \
+            /tmp/phase14-overlay/v17_phase14_root_verification_tests.cpp \
+            "$HOST/libalbay_core.a" -o /tmp/albay-v17/phase14-root-test
+          c++ -std=c++20 -O3 -DNDEBUG -I"$SRC/include" \
+            /tmp/phase14-overlay/v17_phase14_holdout_gate_tests.cpp \
+            "$HOST/libalbay_core.a" -o /tmp/albay-v17/phase14-holdout-test
+          /tmp/albay-v17/phase14-root-test
+          /tmp/albay-v17/phase14-holdout-test \
             /tmp/albay-v17/app/data/V17_PHASE10_HOLDOUT_400.tsv \
             | tee /tmp/albay-v17/PHASE14_HOST_HOLDOUT.log
 
