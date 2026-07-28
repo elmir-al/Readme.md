@@ -1,0 +1,1 @@
+CI produces binaries and structural evidence only. V17 acceptance requires the planned Samsung Galaxy S25 A/B result.

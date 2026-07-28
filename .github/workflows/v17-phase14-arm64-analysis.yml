@@ -1,0 +1,209 @@
+name: Albay V17 Phase 14 ARM64 Analysis
+
+on:
+  push:
+    branches: ["agent/v17-phase14-arm64-analysis-v2"]
+    paths:
+      - "phase14_overlay/**"
+      - ".github/workflows/v17-phase14-arm64-analysis.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "phase14_overlay/**"
+      - ".github/workflows/v17-phase14-arm64-analysis.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-phase14-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified Phase 2 source base
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            part-00.b64 part-01.b64 part-02.b64 part-03.b64 part-04.b64
+            part-05.b64 part-06.b64 part-07.b64 part-08.b64 part-09.b64
+            part-10-01.b64 part-10-02.b64 part-10-03.b64 part-10-04.b64 part-10-05.b64
+            part-10-06.b64 part-10-07.b64 part-10-08.b64 part-10-09.b64 part-10-10.b64
+            part-11.b64 part-12.b64
+          )
+          for part in "${required[@]}"; do test -s "ci_source_v17/${part}"; done
+          mkdir -p /tmp/albay-v17
+          cat \
+            ci_source_v17/part-00.b64 ci_source_v17/part-01.b64 \
+            ci_source_v17/part-02.b64 ci_source_v17/part-03.b64 \
+            ci_source_v17/part-04.b64 ci_source_v17/part-05.b64 \
+            ci_source_v17/part-06.b64 ci_source_v17/part-07.b64 \
+            ci_source_v17/part-08.b64 ci_source_v17/part-09.b64 \
+            ci_source_v17/part-10-01.b64 ci_source_v17/part-10-02.b64 \
+            ci_source_v17/part-10-03.b64 ci_source_v17/part-10-04.b64 \
+            ci_source_v17/part-10-05.b64 ci_source_v17/part-10-06.b64 \
+            ci_source_v17/part-10-07.b64 ci_source_v17/part-10-08.b64 \
+            ci_source_v17/part-10-09.b64 ci_source_v17/part-10-10.b64 \
+            ci_source_v17/part-11.b64 ci_source_v17/part-12.b64 \
+            | base64 --decode > /tmp/v17_phase2_ci_minimal.tar.xz
+          echo "535f88c9859128d9c55ba43d5d59515c5bd4a5a3a0a672f6dafc129b79488d23  /tmp/v17_phase2_ci_minimal.tar.xz" | sha256sum -c --strict
+          xz --test /tmp/v17_phase2_ci_minimal.tar.xz
+          tar -xJf /tmp/v17_phase2_ci_minimal.tar.xz -C /tmp/albay-v17
+
+      - name: Apply audited Phase 14 overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode phase14_overlay/phase14_overlay.tar.xz.b64 > /tmp/phase14_overlay.tar.xz
+          echo "6e586f0804de981405b09dad74cb0998a209132ea90fc36967efbaa856919f3d  /tmp/phase14_overlay.tar.xz" | sha256sum -c --strict
+          xz --test /tmp/phase14_overlay.tar.xz
+          mkdir -p /tmp/phase14-overlay
+          tar -xJf /tmp/phase14_overlay.tar.xz -C /tmp/phase14-overlay
+          echo "f3790df85a0384ae5fd6f510bdde3bef578beb6a32a89ca70ed6e408de71267f  /tmp/phase14-overlay/phase14_engine.patch" | sha256sum -c --strict
+          echo "8ad428798f119cae9d571966955647a8a33cebbaaca25d03fc5b12fdc3c4ee17  /tmp/phase14-overlay/V17_PHASE10_HOLDOUT_400.tsv" | sha256sum -c --strict
+          echo "cd1a9a294d84ce870c2bf11b4e2ff2371b6d8c7e75eb741d6b423d06eafa5507  /tmp/phase14-overlay/v17_phase14_root_verification_tests.cpp" | sha256sum -c --strict
+          echo "110070300e95e8074c2104c856d09e887e281e6b1ffda8cccd536e669d7278ff  /tmp/phase14-overlay/v17_phase14_holdout_gate_tests.cpp" | sha256sum -c --strict
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          cd "$SRC"
+          git apply --check /tmp/phase14-overlay/phase14_engine.patch
+          git apply /tmp/phase14-overlay/phase14_engine.patch
+          mkdir -p /tmp/albay-v17/app/data
+          cp /tmp/phase14-overlay/V17_PHASE10_HOLDOUT_400.tsv /tmp/albay-v17/app/data/
+          grep -Fq 'bool use_root_candidate_verification = false;' include/albay/search.hpp
+          grep -Fq 'options_.threads != 1' src/search.cpp
+          grep -Fq 'root_verification_max_depth = 11;' include/albay/search.hpp
+
+      - name: Host Phase 14 build and gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          HOST=/tmp/albay-v17/host
+          cmake -S "$SRC" -B "$HOST" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBAY_BUILD_TESTS=OFF \
+            -DALBAY_BUILD_TOOLS=OFF \
+            -DALBAY_BUILD_JNI=OFF
+          cmake --build "$HOST" --parallel 2 --target albay albay_core
+          c++ -std=c++20 -O3 -DNDEBUG -I"$SRC/include" \
+            /tmp/phase14-overlay/v17_phase14_root_verification_tests.cpp \
+            "$HOST/libalbay_core.a" -o /tmp/albay-v17/phase14-root-test
+          c++ -std=c++20 -O3 -DNDEBUG -I"$SRC/include" \
+            /tmp/phase14-overlay/v17_phase14_holdout_gate_tests.cpp \
+            "$HOST/libalbay_core.a" -o /tmp/albay-v17/phase14-holdout-test
+          /tmp/albay-v17/phase14-root-test
+          /tmp/albay-v17/phase14-holdout-test \
+            /tmp/albay-v17/app/data/V17_PHASE10_HOLDOUT_400.tsv \
+            | tee /tmp/albay-v17/PHASE14_HOST_HOLDOUT.log
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install exact Android NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;29.0.14206865" "cmake;3.22.1"
+          grep -q 'Pkg.Revision = 29.0.14206865' \
+            "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
+
+      - name: Build Phase 14 ARM64 analysis library
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=/tmp/albay-v17/v17_phase2_ci_minimal
+          chmod +x "$SRC/android/scripts/"*.sh
+          export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          export ANDROID_API_LEVEL=29
+          export CPU_PROFILE=portable
+          export BUILD_JOBS=2
+          export PAIR_OUT_DIR=/tmp/albay-v17/phase14-arm64-pair
+          "$SRC/android/scripts/build_v17_phase2_arm64_pair.sh"
+          test -s "$PAIR_OUT_DIR/artifacts/libalbay_v17_phase2.so"
+
+      - name: Package and independently audit artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          SO=/tmp/albay-v17/phase14-arm64-pair/artifacts/libalbay_v17_phase2.so
+          ART=/tmp/albay-v17/phase14-artifact
+          mkdir -p "$ART"
+          cp "$SO" "$ART/libalbay_phase14.so"
+          cp /tmp/albay-v17/PHASE14_HOST_HOLDOUT.log "$ART/"
+          cp /tmp/phase14-overlay/phase14_engine.patch "$ART/"
+          file "$SO" | tee "$ART/FILE.txt"
+          readelf -hW "$SO" > "$ART/ELF_HEADER.txt"
+          readelf -lW "$SO" > "$ART/ELF_PROGRAM_HEADERS.txt"
+          readelf -dW "$SO" > "$ART/ELF_DYNAMIC.txt"
+          readelf -Ws "$SO" > "$ART/ELF_SYMBOLS.txt"
+          grep -q 'Class:.*ELF64' "$ART/ELF_HEADER.txt"
+          grep -q 'Machine:.*AArch64' "$ART/ELF_HEADER.txt"
+          ! grep -q '(TEXTREL)' "$ART/ELF_DYNAMIC.txt"
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re
+          art = pathlib.Path('/tmp/albay-v17/phase14-artifact')
+          so = art / 'libalbay_phase14.so'
+          data = so.read_bytes()
+          ph = (art / 'ELF_PROGRAM_HEADERS.txt').read_text()
+          loads = []
+          for line in ph.splitlines():
+              if line.lstrip().startswith('LOAD'):
+                  fields = line.split()
+                  loads.append(int(fields[-1], 16))
+          dyn = (art / 'ELF_DYNAMIC.txt').read_text()
+          needed = re.findall(r'\(NEEDED\).*?\[(.*?)\]', dyn)
+          symbols = (art / 'ELF_SYMBOLS.txt').read_text()
+          exports = sorted(set(re.findall(r'\b(albay_[A-Za-z0-9_]+)\b', symbols)))
+          manifest = {
+              'phase': 'V17 Phase 14 Root Verification',
+              'engine_version': '1.0.45',
+              'artifact': so.name,
+              'sha256': hashlib.sha256(data).hexdigest(),
+              'size': len(data),
+              'abi': 'arm64-v8a',
+              'android_api': 29,
+              'ndk': '29.0.14206865',
+              'cpu_profile': 'portable ARMv8-A',
+              'thin_lto': False,
+              'load_alignments': loads,
+              'needed': needed,
+              'albay_exports': exports,
+              'textrel': False,
+              'production_default_changed': False,
+              'physical_device_claim': None,
+          }
+          if len(exports) != 27:
+              raise SystemExit(f'expected 27 albay exports, got {len(exports)}')
+          expected_needed = {'libc.so', 'libdl.so', 'libm.so'}
+          if set(needed) != expected_needed or len(needed) != len(expected_needed):
+              raise SystemExit(f'unexpected NEEDED: {needed}')
+          if not loads or any(v < 16384 for v in loads):
+              raise SystemExit(f'LOAD alignment gate failed: {loads}')
+          (art / 'V17_PHASE14_ARM64_MANIFEST.json').write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+          (art / 'V17_PHASE14_ARM64_SHA256.txt').write_text(
+              f"{manifest['sha256']}  {so.name}\n")
+          PY
+          cat > "$ART/BUILD_CONTEXT.txt" <<'EOF'
+          Albay: 1.0.45 V17 Phase 14 Root Verification
+          NDK: 29.0.14206865
+          ABI: arm64-v8a
+          Android API: 29
+          STL: c++_static
+          CPU profile: portable ARMv8-A
+          ThinLTO: OFF
+          Root verification default: OFF
+          Intended use: opt-in fixed-depth 8-11 single-thread analysis
+          Production runtime changed: NO
+          Android speed/Elo claim: none without physical device execution
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Albay-V17-Phase14-ARM64-Analysis
+          if-no-files-found: error
+          retention-days: 30
+          path: /tmp/albay-v17/phase14-artifact/
