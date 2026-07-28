@@ -177,7 +177,8 @@ jobs:
           }
           if len(exports) != 27:
               raise SystemExit(f'expected 27 albay exports, got {len(exports)}')
-          if needed != ['libc.so', 'libdl.so', 'libm.so']:
+          expected_needed = {'libc.so', 'libdl.so', 'libm.so'}
+          if set(needed) != expected_needed or len(needed) != len(expected_needed):
               raise SystemExit(f'unexpected NEEDED: {needed}')
           if not loads or any(v < 16384 for v in loads):
               raise SystemExit(f'LOAD alignment gate failed: {loads}')
