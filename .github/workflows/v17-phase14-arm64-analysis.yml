@@ -6,6 +6,11 @@ on:
     paths:
       - "phase14_overlay/**"
       - ".github/workflows/v17-phase14-arm64-analysis.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "phase14_overlay/**"
+      - ".github/workflows/v17-phase14-arm64-analysis.yml"
   workflow_dispatch:
 
 permissions:
