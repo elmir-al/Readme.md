@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find phase24_ci -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          test "$(find phase24_ci -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 10
           cat phase24_ci/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
           echo '5d20ad3ad07b3c6ceeb18c295db7ad9871422d52d90f39c1fa95a0e022e2c900  /tmp/albay.tar.xz' | sha256sum -c --strict
           mkdir -p /tmp/albay
@@ -78,10 +78,8 @@ jobs:
           assert not any(x in d for x in ('libc++_shared.so','libstdc++.so','libstdc++.so.6','libgcc_s.so','libgcc_s.so.1'))
           aligns=[int(x.split()[-1],16) for x in p.splitlines() if re.match(r'\s*LOAD\s',x)]
           assert aligns and min(aligns)>=0x4000, aligns
-          c_expected=set('create destroy evaluate_position generate_legal_moves get_author get_best_move get_multipv get_name get_position get_principal_variation get_search_info get_version is_legal_move is_searching make_move new_game pause_search resume_search set_option set_position start_search stop_search undo_move'.split())
-          c_expected={'albay_engine_'+x for x in c_expected}
-          j_names='Create Destroy EvaluatePosition GenerateLegalMoves GetAuthor GetBestMove GetMultiPv GetName GetPosition GetPrincipalVariation GetSearchInfo GetVersion IsLegalMove IsSearching MakeMove NewGame PauseSearch ResumeSearch SetOption SetPosition StartSearch StopSearch UndoMove'.split()
-          j_expected={'Java_com_albay_engine_AlbayEngine_native'+x for x in j_names}
+          c_expected={'albay_engine_'+x for x in 'create destroy evaluate_position generate_legal_moves get_author get_best_move get_multipv get_name get_position get_principal_variation get_search_info get_version is_legal_move is_searching make_move new_game pause_search resume_search set_option set_position start_search stop_search undo_move'.split()}
+          j_expected={'Java_com_albay_engine_AlbayEngine_native'+x for x in 'Create Destroy EvaluatePosition GenerateLegalMoves GetAuthor GetBestMove GetMultiPv GetName GetPosition GetPrincipalVariation GetSearchInfo GetVersion IsLegalMove IsSearching MakeMove NewGame PauseSearch ResumeSearch SetOption SetPosition StartSearch StopSearch UndoMove'.split()}
           c_actual={x for x in syms if x.startswith('albay_engine_')}; j_actual={x for x in syms if x.startswith('Java_com_albay_engine_AlbayEngine_')}
           assert c_actual==c_expected,(sorted(c_expected-c_actual),sorted(c_actual-c_expected))
           assert j_actual==j_expected,(sorted(j_expected-j_actual),sorted(j_actual-j_expected))
