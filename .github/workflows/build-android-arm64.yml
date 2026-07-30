@@ -1,12 +1,12 @@
-name: Build Albay Android ARM64
+name: Phase24 Albay 2.2.0 Android ARM64
 
 on:
   push:
-    branches: [main]
-    paths: ["ci_source/**", ".github/workflows/build-android-arm64.yml"]
+    branches: [phase24-android-2.2.0]
+    paths: ["phase24_ci/**", ".github/workflows/build-android-arm64.yml"]
   pull_request:
     branches: [main]
-    paths: ["ci_source/**", ".github/workflows/build-android-arm64.yml", "ci_trigger/**"]
+    paths: ["phase24_ci/**", ".github/workflows/build-android-arm64.yml"]
   workflow_dispatch:
 
 permissions:
@@ -19,172 +19,93 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct and patch source
+      - name: Reconstruct exact source
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifact
-          exec > >(tee artifact/reconstruct.log) 2>&1
-          test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
-          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
-          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay.tar.xz" | sha256sum -c --strict
-          sha256sum ci_source/android_ndk_shared_ptr.patch ci_source/evaluation_scale_compat.patch ci_source/russian_king_forced_continuation_1042.patch
-          echo "0bbd1e0230cdd08a877e5031d44caf26b3de3bdce35d4cc8097f73833fda47de  ci_source/android_ndk_shared_ptr.patch" | sha256sum -c --strict
-          echo "9cd3cc7a8fb438fbc435278b03b55eaeea2a5d5f23a7793fd37269cc4a36ebe6  ci_source/evaluation_scale_compat.patch" | sha256sum -c --strict
-          echo "2864ce7233dca991f8592312a054e8bcbd3292327f04ac61ca33583d5f082163  ci_source/russian_king_forced_continuation_1042.patch" | sha256sum -c --strict
-          rm -rf /tmp/albay
+          test "$(find phase24_ci -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          cat phase24_ci/part-*.b64 | base64 --decode > /tmp/albay.tar.xz
+          echo '5d20ad3ad07b3c6ceeb18c295db7ad9871422d52d90f39c1fa95a0e022e2c900  /tmp/albay.tar.xz' | sha256sum -c --strict
           mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
-          SRC=/tmp/albay/albay_minimal
-          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/android_ndk_shared_ptr.patch
-          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/evaluation_scale_compat.patch
-          patch -d "$SRC" -p1 --forward --batch --verbose < ci_source/russian_king_forced_continuation_1042.patch
-          grep -q 'std::shared_ptr<SharedSearchState> shared_state() const' "$SRC/include/albay/search.hpp"
-          grep -q 'std::atomic_load_explicit(&shared_state_owner_' "$SRC/include/albay/search.hpp"
-          grep -q 'mutable std::shared_ptr<SharedSearchState> shared_state_owner_' "$SRC/include/albay/search.hpp"
-          ! grep -q 'shared_state_ptr_' "$SRC/include/albay/search.hpp"
-          grep -q 'kEngineVersion = "1.0.42"' "$SRC/include/albay/types.hpp"
-          grep -q 'ALBAY_EVALUATION_SCALE 30000' "$SRC/include/albay/c_api.h"
-          grep -q 'ALBAY_MATE_THRESHOLD 29000' "$SRC/include/albay/c_api.h"
-          grep -q 'ALBAY_MATE_SCORE 30000' "$SRC/include/albay/c_api.h"
-          grep -q 'ALBAY_INFINITE_SCORE 32000' "$SRC/include/albay/c_api.h"
-          ! grep -R -q 'public_score_from_internal' "$SRC/include/albay" "$SRC/src/c_api.cpp"
-          grep -q 'context.output.resize(write);' "$SRC/src/movegen.cpp"
-          grep -q 'This is not the Brazilian maximum-capture rule' "$SRC/src/movegen.cpp"
+          test -f /tmp/albay/albay-2.2.0/CMakeLists.txt
+          test -f /tmp/albay/albay-2.2.0/jni/albay_jni.cpp
 
-      - name: Host rule regression probe
-        shell: bash
-        run: |
-          set -euo pipefail
-          SRC=/tmp/albay/albay_minimal
-          cmake -S "$SRC" -B host-rule -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF
-          cmake --build host-rule --target albay --parallel 2
-          python3 - <<'PY'
-          import ctypes
-          from pathlib import Path
-
-          lib = ctypes.CDLL(str(Path('host-rule/libalbay.so').resolve()))
-          lib.albay_engine_create.restype = ctypes.c_void_p
-          lib.albay_engine_destroy.argtypes = [ctypes.c_void_p]
-          lib.albay_engine_set_position.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-          lib.albay_engine_set_position.restype = ctypes.c_int
-          lib.albay_engine_generate_legal_moves.argtypes = [
-              ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t,
-              ctypes.POINTER(ctypes.c_size_t),
-          ]
-          lib.albay_engine_generate_legal_moves.restype = ctypes.c_int
-          lib.albay_engine_get_version.restype = ctypes.c_char_p
-
-          engine = lib.albay_engine_create()
-          assert engine
-          try:
-              assert lib.albay_engine_get_version().decode() == '1.0.42'
-              assert lib.albay_engine_set_position(
-                  engine, b'W:WKa1,e3:Ba3,c3,g5;NP=0'
-              ) == 0
-              required = ctypes.c_size_t()
-              buffer = ctypes.create_string_buffer(4096)
-              status = lib.albay_engine_generate_legal_moves(
-                  engine, buffer, len(buffer), ctypes.byref(required)
-              )
-              assert status == 0, status
-              legal = buffer.value.decode()
-              assert legal == 'a1xf6xh4', legal
-          finally:
-              lib.albay_engine_destroy(engine)
-          PY
-
-      - name: Install NDK r29
+      - name: Install exact NDK r29
         shell: bash
         run: |
           set -euo pipefail
           SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "ndk;29.0.14206865"
+          "$SDKMANAGER" 'ndk;29.0.14206865'
+          grep -q 'Pkg.Revision = 29.0.14206865' "${ANDROID_SDK_ROOT}/ndk/29.0.14206865/source.properties"
 
-      - name: Configure and build
+      - name: Build arm64-v8a API 29
         shell: bash
         run: |
           set -euo pipefail
           NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
-          cmake -S /tmp/albay/albay_minimal -B build -G Ninja \
+          cmake -S /tmp/albay/albay-2.2.0 -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
             -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
-            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF -DALBAY_BUILD_JNI=OFF \
-            -DALBAY_ENABLE_LTO=OFF -DALBAY_ENABLE_THIN_LTO=OFF \
-            -DALBAY_ENABLE_PGO_GENERATE=OFF -DALBAY_ENABLE_PGO_USE=OFF \
-            -DALBAY_ANDROID_CPU_PROFILE=portable -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON
-          cmake --build build --target albay --parallel 2 --verbose 2>&1 | tee artifact/build.log
+            -DALBAY_BUILD_TESTS=OFF -DALBAY_BUILD_TOOLS=OFF \
+            -DALBAY_BUILD_MATCH_PLUGIN=OFF -DALBAY_ANDROID_16K_PAGE_ALIGNMENT=ON \
+            2>&1 | tee configure.log
+          cmake --build build --target albay --parallel 2 --verbose 2>&1 | tee build.log
 
-      - name: Verify binary
+      - name: Verify ELF and exact public exports
         shell: bash
         run: |
           set -euo pipefail
           TOOLS="${ANDROID_SDK_ROOT}/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p artifact/arm64-v8a artifact/evidence
+          cp build/libalbay.so artifact/arm64-v8a/libalbay.unstripped.so
           "$TOOLS/llvm-strip" --strip-unneeded build/libalbay.so
-          cp build/libalbay.so artifact/libalbay.so
-          "$TOOLS/llvm-readelf" -h artifact/libalbay.so > artifact/elf-header.txt
-          "$TOOLS/llvm-readelf" -d artifact/libalbay.so > artifact/dynamic-dependencies.txt
-          "$TOOLS/llvm-readelf" -l artifact/libalbay.so > artifact/program-headers.txt
-          "$TOOLS/llvm-nm" -D --defined-only artifact/libalbay.so > artifact/exports.txt
-          grep -Eq 'Machine:[[:space:]]+AArch64' artifact/elf-header.txt
-          grep -Eq 'Type:[[:space:]]+DYN' artifact/elf-header.txt
-          ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/dynamic-dependencies.txt
-          for symbol in create start_search get_best_move get_evaluation_scale destroy; do
-            grep -Eq "albay_engine_${symbol}$" artifact/exports.txt
-          done
-          test "$(grep -Ec ' albay_engine_[A-Za-z0-9_]+$' artifact/exports.txt)" -eq 27
-          awk '$1 == "LOAD" {print}' artifact/program-headers.txt > artifact/load-segments.txt
-          grep -Eq '0x0*4000([[:space:]]|$)' artifact/load-segments.txt
-          sha256sum artifact/libalbay.so > artifact/SHA256SUMS.txt
+          cp build/libalbay.so artifact/arm64-v8a/libalbay.so
+          "$TOOLS/llvm-readelf" -hW build/libalbay.so > artifact/evidence/elf-header.txt
+          "$TOOLS/llvm-readelf" -dW build/libalbay.so > artifact/evidence/dynamic.txt
+          "$TOOLS/llvm-readelf" -lW build/libalbay.so > artifact/evidence/program-headers.txt
+          "$TOOLS/llvm-nm" -D --defined-only build/libalbay.so > artifact/evidence/exports.txt
+          strings build/libalbay.so | grep -F '2.2.0-book2-nnue2q2-rules2' > artifact/evidence/embedded-version.txt
+          python3 - <<'PY'
+          import pathlib,re
+          r=pathlib.Path('artifact/evidence')
+          h=(r/'elf-header.txt').read_text(); d=(r/'dynamic.txt').read_text(); p=(r/'program-headers.txt').read_text()
+          lines=(r/'exports.txt').read_text().splitlines(); syms={x.split()[-1] for x in lines if x.split()}
+          assert re.search(r'Class:\s+ELF64',h) and re.search(r'Machine:\s+AArch64',h) and re.search(r'Type:\s+DYN',h)
+          assert 'TEXTREL' not in d
+          assert not any(x in d for x in ('libc++_shared.so','libstdc++.so','libstdc++.so.6','libgcc_s.so','libgcc_s.so.1'))
+          aligns=[int(x.split()[-1],16) for x in p.splitlines() if re.match(r'\s*LOAD\s',x)]
+          assert aligns and min(aligns)>=0x4000, aligns
+          c_expected=set('create destroy evaluate_position generate_legal_moves get_author get_best_move get_multipv get_name get_position get_principal_variation get_search_info get_version is_legal_move is_searching make_move new_game pause_search resume_search set_option set_position start_search stop_search undo_move'.split())
+          c_expected={'albay_engine_'+x for x in c_expected}
+          j_names='Create Destroy EvaluatePosition GenerateLegalMoves GetAuthor GetBestMove GetMultiPv GetName GetPosition GetPrincipalVariation GetSearchInfo GetVersion IsLegalMove IsSearching MakeMove NewGame PauseSearch ResumeSearch SetOption SetPosition StartSearch StopSearch UndoMove'.split()
+          j_expected={'Java_com_albay_engine_AlbayEngine_native'+x for x in j_names}
+          c_actual={x for x in syms if x.startswith('albay_engine_')}; j_actual={x for x in syms if x.startswith('Java_com_albay_engine_AlbayEngine_')}
+          assert c_actual==c_expected,(sorted(c_expected-c_actual),sorted(c_actual-c_expected))
+          assert j_actual==j_expected,(sorted(j_expected-j_actual),sorted(j_actual-j_expected))
+          (r/'verification.txt').write_text('ELF64 AArch64 ET_DYN: PASS\nLOAD alignments: '+str([hex(x) for x in aligns])+'\nTEXTREL: none\nDynamic C++ runtime: none\nC API: 23/23 exact\nJNI: 23/23 exact\nVersion: 2.2.0-book2-nnue2q2-rules2\n')
+          PY
+          cp configure.log build.log artifact/evidence/
+          sha256sum artifact/arm64-v8a/libalbay.so artifact/arm64-v8a/libalbay.unstripped.so > artifact/SHA256SUMS.txt
           cat > artifact/BUILD_INFO.txt <<'EOF'
-          Source version: 1.0.42
+          Engine: Albay 2.2.0-book2-nnue2q2-rules2
+          Source SHA-256: 5d20ad3ad07b3c6ceeb18c295db7ad9871422d52d90f39c1fa95a0e022e2c900
           NDK: 29.0.14206865
           ABI: arm64-v8a
           Minimum API: 29
-          C++ runtime: c++_static
+          STL: c++_static
           CPU: portable ARMv8-A
-          ELF LOAD alignment: 16 KiB
-          C API exports: 27
-          Score contract: original raw native Albay domain
-          Ordinary score range: -28999..+28999
-          Mate threshold: 29000
-          Mate score: 30000
-          Internal alpha-beta infinity: 32000 (not a normal UI evaluation)
-          Score rescaling/conversion: none
-          Russian king rule: forced continuation after a selected jump; no truncated landing
-          Uploaded regression position: only a1xf6xh4 is legal
-          Android shared-state model: atomic shared_ptr snapshots (no raw pointer)
-          Host Release CTest: 47/47 passed
+          ELF LOAD alignment: >=16 KiB
+          C API/JNI exports: 23/23 exact
+          Physical-device execution: pending
           EOF
-          {
-            echo "ELF AArch64: PASS"
-            echo "ET_DYN: PASS"
-            echo "No GNU/shared C++ runtime: PASS"
-            echo "27 C API exports: PASS"
-            echo "Raw original score contract 29000/30000/32000: PASS"
-            echo "Russian king forced-continuation host probe: PASS"
-            echo "10000 score conversion absent: PASS"
-            echo "16 KiB LOAD alignment: PASS"
-            echo "Raw-pointer shared-state bridge absent: PASS"
-          } > artifact/verification.txt
 
-      - name: Upload evidence
-        if: always()
+      - name: Upload verified library and evidence
         uses: actions/upload-artifact@v4
         with:
-          name: Albay-verification-${{ github.run_number }}
-          path: artifact/
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload verified library
-        uses: actions/upload-artifact@v4
-        with:
-          name: Albay-1.0.42-Russian-Capture-Fix-Android-arm64-v8a-NDK-r29-static
+          name: Albay-2.2.0-Android-arm64-v8a-NDK-r29
           path: artifact/
           if-no-files-found: error
           retention-days: 30
