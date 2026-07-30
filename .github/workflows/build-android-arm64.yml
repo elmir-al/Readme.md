@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find phase24_ci -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 10
-          cat phase24_ci/part-00.b64 phase24_ci/part-01.b64 phase24_ci/part-02.b64 phase24_ci/part-03.b64 phase24_ci/part-04.b64 phase24_ci/part-04b.b64 phase24_ci/part-05.b64 phase24_ci/part-06.b64 phase24_ci/part-07.b64 phase24_ci/part-08.b64 | base64 --decode > /tmp/albay.tar.xz
+          test "$(find phase24_ci -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 11
+          cat phase24_ci/part-00.b64 phase24_ci/part-01.b64 phase24_ci/part-02.b64 phase24_ci/part-03.b64 phase24_ci/part-04.b64 phase24_ci/part-04b.b64 phase24_ci/part-04c.b64 phase24_ci/part-05.b64 phase24_ci/part-06.b64 phase24_ci/part-07.b64 phase24_ci/part-08.b64 | base64 --decode > /tmp/albay.tar.xz
           echo '5d20ad3ad07b3c6ceeb18c295db7ad9871422d52d90f39c1fa95a0e022e2c900  /tmp/albay.tar.xz' | sha256sum -c --strict
           mkdir -p /tmp/albay
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
