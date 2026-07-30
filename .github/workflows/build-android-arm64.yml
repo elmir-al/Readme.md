@@ -30,6 +30,7 @@ jobs:
           tar -xJf /tmp/albay.tar.xz -C /tmp/albay
           test -f /tmp/albay/albay-2.2.0/CMakeLists.txt
           test -f /tmp/albay/albay-2.2.0/jni/albay_jni.cpp
+          find /tmp/albay/albay-2.2.0 -exec touch {} +
 
       - name: Install exact NDK r29
         shell: bash
