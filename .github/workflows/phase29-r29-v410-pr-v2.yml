@@ -1,0 +1,42 @@
+name: Albay v4.1.0 Phase 29 PR Build v2
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'phase29_v410_build.sh'
+      - 'phase29_v410_build_v2.sh'
+      - 'phase29_v410_overlay10/**'
+      - '.github/workflows/phase29-r29-v410-pr-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build and audit Albay v4.1.0
+        shell: bash
+        run: bash phase29_v410_build_v2.sh
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-v4.1.0-Phase29-v2-evidence-${{ github.run_number }}
+          path: artifact/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload verified Android ARM64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-v4.1.0-Phase29-COMPLETE-Android-arm64-v8a-NDK-r29
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
