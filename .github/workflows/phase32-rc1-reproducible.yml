@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'phase32_rc1_reproducible.sh'
+      - 'phase32_rc1_reproducible_v2.sh'
       - 'phase29_v410_overlay10/**'
       - 'phase30_audit_android_elf.py'
       - 'phase30_audit_native_exports.py'
@@ -27,7 +28,7 @@ jobs:
           java-version: '17'
       - name: Build RC1 twice and compare byte-for-byte
         shell: bash
-        run: bash phase32_rc1_reproducible.sh
+        run: bash phase32_rc1_reproducible_v2.sh
       - name: Upload RC1 reproducibility evidence
         if: always()
         uses: actions/upload-artifact@v4
