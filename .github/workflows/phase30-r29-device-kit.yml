@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'phase30_build_and_package.sh'
+      - 'phase30_tb3_generate.cpp'
       - 'phase29_v410_overlay10/**'
       - '.github/workflows/phase30-r29-device-kit.yml'
   workflow_dispatch:
@@ -24,7 +25,9 @@ jobs:
           java-version: '17'
       - name: Build, audit and package
         shell: bash
-        run: bash phase30_build_and_package.sh
+        run: |
+          sed -i 's#"$SRC/tools/tb3_generate.cpp"#"$WORK/phase30_tb3_generate.cpp"#' phase30_build_and_package.sh
+          bash phase30_build_and_package.sh
       - name: Upload evidence on every result
         if: always()
         uses: actions/upload-artifact@v4
