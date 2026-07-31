@@ -4,8 +4,10 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'phase30_build_and_package.sh'
+      - 'phase30_android_build_only.sh'
       - 'phase30_tb3_generate.cpp'
+      - 'phase30_audit_android_elf.py'
+      - 'phase30_audit_native_exports.py'
       - 'phase29_v410_overlay10/**'
       - '.github/workflows/phase30-r29-device-kit.yml'
   workflow_dispatch:
@@ -23,11 +25,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build, audit and package
+      - name: Build and audit exact Android ARM64 library
         shell: bash
-        run: |
-          sed -i 's#"$SRC/tools/tb3_generate.cpp"#"$WORK/phase30_tb3_generate.cpp"#' phase30_build_and_package.sh
-          bash phase30_build_and_package.sh
+        run: bash phase30_android_build_only.sh
       - name: Upload evidence on every result
         if: always()
         uses: actions/upload-artifact@v4
