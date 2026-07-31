@@ -1,0 +1,1 @@
+This branch is a temporary CI-only reproducibility probe for Albay v4.1.0 Phase 32. It must not be merged into main.
