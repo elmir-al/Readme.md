@@ -1,0 +1,141 @@
+name: Albay v4.1.0 Phase 29 Android ARM64
+
+on:
+  push:
+    branches: [albay-phase29-r29-build-20260731]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Reconstruct exact Albay v4.1.0 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact /tmp/albay-old /tmp/albay-overlay /tmp/albay-v410
+          exec > >(tee artifact/reconstruct.log) 2>&1
+
+          test "$(find ci_source -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 9
+          cat ci_source/part-*.b64 | base64 --decode > /tmp/albay-old.tar.xz
+          echo "1f137dcfda27a3484f07e40c9e1dc38687f68f137777e626135425dd9cb4756e  /tmp/albay-old.tar.xz" | sha256sum -c --strict
+          tar -xJf /tmp/albay-old.tar.xz -C /tmp/albay-old
+          OLD_SRC=/tmp/albay-old/albay_minimal
+          test -f "$OLD_SRC/src/tb3_data.inc"
+          echo "dad96580c6f74f746159b8c0490566a65c041623ca4a968b234a13aa070ee2bb  $OLD_SRC/src/tb3_data.inc" | sha256sum -c --strict
+          cp "$OLD_SRC/src/tb3_data.inc" /tmp/tb3_data.inc
+
+          test "$(find phase29_v410_overlay10 -maxdepth 1 -name 'part-*.b64' | wc -l)" -eq 5
+          cat phase29_v410_overlay10/part-*.b64 | base64 --decode > /tmp/albay-v410-overlay.tar.xz
+          echo "577600c4441c101f9003e954d484e8bf299d2472827ad0d655a52043bef2f76e  /tmp/albay-v410-overlay.tar.xz" | sha256sum -c --strict
+          tar -xJf /tmp/albay-v410-overlay.tar.xz -C /tmp/albay-overlay
+          test -f /tmp/albay-overlay/albay/CMakeLists.txt
+
+          cp -a /tmp/albay-overlay/albay/. /tmp/albay-v410/
+          cp /tmp/tb3_data.inc /tmp/albay-v410/src/tb3_data.inc
+          chmod +x /tmp/albay-v410/scripts/build_android_arm64.sh
+
+          grep -Fq 'project(Albay VERSION 4.1.0 LANGUAGES CXX)' /tmp/albay-v410/CMakeLists.txt
+          grep -Fq 'EXPECTED_NDK_REVISION="${EXPECTED_NDK_REVISION:-29.0.14206865}"' /tmp/albay-v410/scripts/build_android_arm64.sh
+          grep -Fq -- '-Wl,-z,max-page-size=16384' /tmp/albay-v410/CMakeLists.txt
+          echo "dad96580c6f74f746159b8c0490566a65c041623ca4a968b234a13aa070ee2bb  /tmp/albay-v410/src/tb3_data.inc" | sha256sum -c --strict
+
+          (cd /tmp/albay-v410 && find . -type f -print0 | sort -z | xargs -0 sha256sum) > artifact/SOURCE_SHA256SUMS.txt
+          sha256sum /tmp/albay-old.tar.xz /tmp/albay-v410-overlay.tar.xz /tmp/albay-v410/src/tb3_data.inc > artifact/INPUT_SHA256SUMS.txt
+
+      - name: Install exact Android NDK r29
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "ndk;29.0.14206865"
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          test -f "$NDK/source.properties"
+          grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*29\.0\.14206865[[:space:]]*$' "$NDK/source.properties"
+          cat "$NDK/source.properties" | tee artifact/NDK_SOURCE_PROPERTIES.txt
+
+      - name: Build and run fail-closed audits
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_ROOT="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          export ANDROID_PLATFORM=android-29
+          export JOBS=2
+          cd /tmp/albay-v410
+          ./scripts/build_android_arm64.sh 2>&1 | tee "$GITHUB_WORKSPACE/artifact/phase29-build.log"
+
+      - name: Create debug symbols and independent ELF evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_SDK_ROOT}/ndk/29.0.14206865"
+          TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          DIST=/tmp/albay-v410/dist/android/arm64-v8a
+          test -f "$DIST/libalbay.so"
+          test -f "$DIST/libalbay.so.unstripped"
+
+          "$TOOLS/llvm-objcopy" --only-keep-debug "$DIST/libalbay.so.unstripped" "$DIST/libalbay.so.debug"
+          "$TOOLS/llvm-objcopy" --add-gnu-debuglink="$DIST/libalbay.so.debug" "$DIST/libalbay.so"
+
+          "$TOOLS/llvm-readelf" -W -h "$DIST/libalbay.so" > artifact/independent-elf-header.txt
+          "$TOOLS/llvm-readelf" -W -l "$DIST/libalbay.so" > artifact/independent-program-headers.txt
+          "$TOOLS/llvm-readelf" -W -d "$DIST/libalbay.so" > artifact/independent-dynamic.txt
+          "$TOOLS/llvm-readelf" -W -n "$DIST/libalbay.so" > artifact/independent-notes.txt
+          "$TOOLS/llvm-nm" -D --defined-only "$DIST/libalbay.so" > artifact/independent-exports.txt
+
+          grep -Eq 'Machine:[[:space:]]+AArch64' artifact/independent-elf-header.txt
+          grep -Eq 'Type:[[:space:]]+DYN' artifact/independent-elf-header.txt
+          grep -Eq '\(SONAME\).+\[libalbay\.so\]' artifact/independent-dynamic.txt
+          ! grep -Eq 'libstdc\+\+\.so\.6|libgcc_s\.so\.1|libc\+\+_shared\.so' artifact/independent-dynamic.txt
+          grep -Eq '[[:space:]]JNI_OnLoad$' artifact/independent-exports.txt
+          grep -Eq '[[:space:]]JNI_OnUnload$' artifact/independent-exports.txt
+          awk '$1 == "LOAD" {print}' artifact/independent-program-headers.txt > artifact/independent-load-segments.txt
+          test "$(awk '$1 == "LOAD" && $NF != "0x4000" {bad++} END {print bad+0}' artifact/independent-load-segments.txt)" -eq 0
+
+          cp -a "$DIST" artifact/arm64-v8a
+          sha256sum artifact/arm64-v8a/libalbay.so artifact/arm64-v8a/libalbay.so.unstripped artifact/arm64-v8a/libalbay.so.debug > artifact/FINAL_SHA256SUMS.txt
+          {
+            echo 'Status=PASS'
+            echo 'Engine=Albay 4.1.0'
+            echo 'Phase=29'
+            echo 'NDK=29.0.14206865'
+            echo 'ABI=arm64-v8a'
+            echo 'Platform=android-29'
+            echo 'STL=c++_static'
+            echo 'ELFMachine=AArch64'
+            echo 'ELFType=ET_DYN'
+            echo 'PageAlignment=16384'
+            echo 'Interfaces=JNI+C_API'
+            echo 'DebugSymbols=separate'
+          } > artifact/PHASE29_BUILD_INFO.txt
+
+      - name: Upload evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-v4.1.0-Phase29-Android-ARM64-evidence-${{ github.run_number }}
+          path: artifact/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload verified production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-v4.1.0-Phase29-COMPLETE-Android-arm64-v8a-NDK-r29
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
