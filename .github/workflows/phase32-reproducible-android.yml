@@ -1,0 +1,38 @@
+name: Albay v4.1.0 Phase 32 Reproducible Android
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'phase32_reproducible_android.sh'
+      - 'phase29_v410_overlay10/**'
+      - 'phase30_audit_android_elf.py'
+      - 'phase30_audit_native_exports.py'
+      - 'phase30_tb3_generate.cpp'
+      - '.github/workflows/phase32-reproducible-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproducible-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build twice and compare byte-for-byte
+        shell: bash
+        run: bash phase32_reproducible_android.sh
+      - name: Upload reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Albay-v4.1.0-Phase32-Reproducibility-Evidence-${{ github.run_number }}
+          path: artifact-phase32/
+          if-no-files-found: warn
+          retention-days: 30
